@@ -1,9 +1,12 @@
 **/*.pyc
 **/.DS_Store
-**/ipynb_checkpoints
+**/.ipynb_checkpoints
+**/__pycache__
+**/glove*.txt
 coco/images/*
 coco/annotations/*
 data/*
+prepro_log.txt
 
 !data/.gitkeep
 !coco/images/.gitkeep
