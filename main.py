@@ -26,6 +26,7 @@ tf.app.flags.DEFINE_integer("num_epochs", 0, "Number of epochs to train. 0 means
 tf.app.flags.DEFINE_integer("primary_metric", "CIDEr", "Primary evaluation metric. Use it for early stopping on the validation set.") # Bleu, METEOR, ROUGE_L, CIDEr
 
 # Fixed (i.e. not intended to be tuned) Model Parameters
+tf.app.flags.DEFINE_integer("embedding_size", 300, "Dimension of embeddings for words")
 tf.app.flags.DEFINE_integer("max_caption_len", 31, "Maximum caption length (for both input and output)")
 tf.app.flags.DEFINE_integer("image_dim1", 64, "Number of regions (eg. 8*8=64 for InceptionRes)")
 tf.app.flags.DEFINE_integer("image_dim2", 1536, "Dimension of image feature for each region (eg. 1536 for InceptionRes)")
@@ -36,6 +37,8 @@ tf.app.flags.DEFINE_float("max_gradient_norm", 5.0, "Clip gradients to this norm
 tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
 tf.app.flags.DEFINE_integer("batch_size", 100, "Batch size to use")
 tf.app.flags.DEFINE_integer("hidden_size", 500, "Size of the RNN states")
+tf.app.flags.DEFINE_integer("beam_width", 10, "Beam width of beam search decoder")
+
 
 # How often to print, save, eval
 tf.app.flags.DEFINE_integer("print_every", 1, "How many iterations to do per print.")

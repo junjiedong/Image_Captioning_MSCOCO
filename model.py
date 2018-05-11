@@ -11,6 +11,7 @@ import tensorflow as tf
 from pycocotools.coco import COCO
 from coco.coco_caption_py3.pycocoevalcap.eval import COCOEvalCap
 from data_batcher import get_batch_generator
+from modules import BasicTransferLayer, RNNDecoder
 
 class CaptionModel(object):
     """Top-level Image Captioning module"""
@@ -34,7 +35,7 @@ class CaptionModel(object):
             # Use He Initialization by default
             self.add_placeholders()
             self.add_embedding_layer(emb_matrix)
-            self.build_graph()
+            self.build_graph(emb_matrix)
             self.add_loss()
 
         # Define trainable parameters, gradient, gradient norm, and clip by gradient norm
@@ -84,14 +85,29 @@ class CaptionModel(object):
             self.caption_input_embs = tf.nn.embedding_lookup(embedding_matrix, self.caption_ids_input, name='caption_input_embs')
 
 
-    def build_graph(self):
+    def build_graph(self, emb_matrix):
         """
-        Builds the main part of the graph for the model.
+        Builds the main part of the graph the model.
         Defines:
-
+            self.logits: output from decoder, used for training
+            self.predicted_ids: output ids from decoder, used for evaluation
         """
-        pass
-
+        # Use fully connected layer to transfer output of cnn
+        self.transfer_layer = BasicTransferLayer(self.FLAGS.hidden_size)
+        decoder_initial_state = transfer_layer.build_graph(self.image_features)
+        # Use LSTM to decode the caption 
+        self.decoder = RNNDecoder(self.FLAGS.hidden_size,self.FLAGS.embedding_size)
+        # build graph for training
+        decoder_output,_ = decoder.build_graph(
+            decoder_initial_state,self.caption_input_embs,self.caption_mask,"train")
+        # build graph for inferring
+        infer_params={embedding:emb_matrix,start_token:3,end_token:2,length_penalty_weight=0.0}
+        infer_params['beam_width']=self.FLAGS.beam_width 
+        infer_params['maximum_length']=self.FLAGS.max_caption_len
+        _,predicted_ids = decoder.build_graph(
+            decoder_initial_state,self.caption_input_embs,self.caption_mask,"infer",infer_params)
+        self.logits = decoder_output
+        self.predicted_ids = predicted_ids
 
     def add_loss(self):
         """
@@ -112,7 +128,7 @@ class CaptionModel(object):
             captions: list of length batch_size, each element is a caption string
         """
         input_feed = {self.image_features: batch.image_features}  # Only need image_features for prediction
-        output_feed = [ ]   # Whatever needed for prediction
+        output_feed = [self.predicted_ids]   # Whatever needed for prediction
 
         _ = session.run(output_feed, input_feed)
 

@@ -11,7 +11,7 @@ class RNNDecoder(object):
 	the same RNN cell and output layer with inference.
 	Refer to the decoder in tensorflow NMT model: https://github.com/tensorflow/nmt
 	"""
-	def __init__(self,hidden_size,num_layers=1,embedding_size):
+	def __init__(self,hidden_size,embedding_size,num_layers=1):
 		"""
 		Inputs:
 			hidden_size: int. Hidden size of the RNN
@@ -35,7 +35,7 @@ class RNNDecoder(object):
           	mode: "train" or "infer"
 		  	infer_params: dictionary contains parameters for inference
 		  		Dictionary should contain keys: beam_width, embedding, start_token, 
-		  										end_token, length_penalty_weight
+		  										end_token, length_penalty_weight, maximum_length
 		  		'embedding' is the same definition as params used in tf.nn.embedding_lookup
 		  		'start_token' and 'end_token' are ids of the start/end token in embedding
 		Outputs:
@@ -74,7 +74,8 @@ class RNNDecoder(object):
 					output_layer = self.projection_layer,
 					length_penalty_weight=infer_params['length_penalty_weight'])
 				# dynamic decoding
-				outputs,_= tf.contrib.seq2seq.dynamic_decode(beam_decoder,scope=decoder_scope)
+				outputs,_= tf.contrib.seq2seq.dynamic_decode(
+					beam_decoder,scope=decoder_scope,maximum_iterations=infer_params['maximum_length'])
 				return None, outputs.predicted_ids
 
 def masked_softmax(logits, mask):
