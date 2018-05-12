@@ -216,21 +216,20 @@ class CaptionModel(object):
         return captions
 
 
-    # # PROBLEM: 'eval' mode only gives the image features, 'train' mode would iterate over the dataset indefinitely
-    # # Will probably not use this
-    # def get_val_loss(self, session):
-    #     '''
-    #     Get loss for the entire val set
-    #     '''
-    #     total_loss, num_examples = 0., 0
-    #     tic = time.time()
-    #     for batch in get_batch_generator(self.word2id, image_features_map, self.train_caption_id_2_caption, self.caption_id_2_img_id, \
-    #                                     self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'eval', image_features_list):
-    #         total_loss += get_loss(session, batch)
-    #         num_examples += batch.batch_size
-    #
-    #     logging.info("Computing validation loss over {} examples took {} seconds".format(num_examples, time.time() - tic))
-    #     return total_loss / total
+    def get_val_loss(self, session):
+        '''
+        Get average loss on the entire val set
+        This function is called periodically during training
+        '''
+        total_loss, num_examples = 0., 0
+        tic = time.time()
+        for batch in get_batch_generator(self.word2id, image_features_map, self.val_caption_id_2_caption, self.caption_id_2_img_id, \
+                                        self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'train', image_features_list):
+            total_loss += get_loss(session, batch) * batch.batch_size
+            num_examples += batch.batch_size
+
+        logging.info("Computing validation loss over {} examples took {} seconds".format(num_examples, time.time() - tic))
+        return total_loss / total
 
 
     def check_metric(self, session, mode='val', num_samples=0):
@@ -312,7 +311,8 @@ class CaptionModel(object):
             epoch_tic = time.time()
 
             # Loop over batches
-            for batch in get_batch_generator(self.word2id, self.FLAGS.batch_size, self.FLAGS.max_caption_len):
+            for batch in get_batch_generator(self.word2id, image_features_map, self.train_caption_id_2_caption, self.caption_id_2_img_id, \
+                                            self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'train', image_features_list):
 
                 # Run training iteration
                 iter_tic = time.time()
@@ -339,10 +339,10 @@ class CaptionModel(object):
 
                 # Sometimes evaluate the model
                 if global_step % self.FLAGS.eval_every == 0:
-                    # # Get loss for entire val set and log to tensorboard
-                    # val_loss = self.get_val_loss(session)
-                    # logging.info("Epoch %d, Iter %d, Val loss: %f" % (epoch, global_step, val_loss))
-                    # write_summary(val_loss, "val/loss", summary_writer, global_step)
+                    # Get loss for entire val set and log to tensorboard
+                    val_loss = self.get_val_loss(session)
+                    logging.info("Epoch %d, Iter %d, Val loss: %f" % (epoch, global_step, val_loss))
+                    write_summary(val_loss, "val/loss", summary_writer, global_step)
 
                     # Evaluate on val set and log all the metrics to tensorboard
                     val_scores = self.check_metric(session, mode='val', num_samples=0)
