@@ -7,7 +7,7 @@ import tensorflow as tf
 class RNNDecoder(object):
 	"""
 	General-purpose model to decode a sequence using a RNN.
-	Use beam search for inference. Need to build training and inference graph separately. Share 
+	Use beam search for inference. Need to build training and inference graph separately. Share
 	the same RNN cell and output layer with inference.
 	Refer to the decoder in tensorflow NMT model: https://github.com/tensorflow/nmt
 	"""
@@ -19,7 +19,7 @@ class RNNDecoder(object):
 		"""
 		self.hidden_size = hidden_size
 		self.num_layers = num_layers
-		self.rnn_cell = tensorflow.contrib.cudnn_rnn.CudnnLSTM(
+		self.rnn_cell = tf.contrib.cudnn_rnn.CudnnLSTM(
 			num_layers=self.num_layers,
 			num_units=hidden_size)
 		self.projection_layer = tf.layers.Dense(
@@ -34,7 +34,7 @@ class RNNDecoder(object):
             	Has 1s where there is real input, 0s where there's padding.
           	mode: "train" or "infer"
 		  	infer_params: dictionary contains parameters for inference
-		  		Dictionary should contain keys: beam_width, embedding, start_token, 
+		  		Dictionary should contain keys: beam_width, embedding, start_token,
 		  										end_token, length_penalty_weight, maximum_length
 		  		'embedding' is the same definition as params used in tf.nn.embedding_lookup
 		  		'start_token' and 'end_token' are ids of the start/end token in embedding
@@ -44,7 +44,7 @@ class RNNDecoder(object):
 			predicted_ids: Tensor shape (batch_size,?); None for 'train' mode
 		"""
 		with tf.variable_scope("decoder") as decoder_scope:
-			# Build graph for training	
+			# Build graph for training
 			if mode = "train":
 				# change masks to real sequence length of decoder inputs: Tensor shape (batch_size,)
 				sequence_length = tf.reduce_sum(masks,axis=1)
@@ -53,7 +53,7 @@ class RNNDecoder(object):
 				basic_decoder =  tf.contrib.seq2seq.BasicDecoder(
 					self.rnn_cell,helper,initial_state,
 					output_layer = self.projection_layer)
-				# dynamic decoding 
+				# dynamic decoding
 				# possible options: impute_finished, maximum_iterations, swap_memory
 				outputs,_= tf.contrib.seq2seq.dynamic_decode(basic_decoder,scope=decoder_scope)
 				return outputs.rnn_output, None
@@ -101,7 +101,7 @@ def masked_softmax(logits, mask):
 
 class BasicTransferLayer(object):
 	"""
-	Module to combine CNN with output decoder 
+	Module to combine CNN with output decoder
 	"""
 	def __init__(self,hidden_size):
 		self.hidden_size = hidden_size

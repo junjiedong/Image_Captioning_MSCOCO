@@ -12,6 +12,8 @@ from pycocotools.coco import COCO
 from coco.coco_caption_py3.pycocoevalcap.eval import COCOEvalCap
 from data_batcher import get_batch_generator
 from modules import BasicTransferLayer, RNNDecoder
+from vocab import PAD_ID, UNK_ID, EOS_ID, SOS_ID    # 0, 1, 2, 3
+
 
 class CaptionModel(object):
     """Top-level Image Captioning module"""
@@ -25,12 +27,18 @@ class CaptionModel(object):
           word2id: dictionary mapping word (string) to word idx (int)
           emb_matrix: numpy array shape (vocab_size, embedding_size) containing pre-traing GloVe embeddings
         """
-        print("Initializing the Caption Model...")
         self.FLAGS = FLAGS
         self.id2word = id2word
         self.word2id = word2id
 
+        print("Reading dataset metadata...");
+        self.caption_id_2_img_id = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "caption_id_2_img_id.p")), 'rb')
+        self.train_caption_id_2_caption = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "train_caption_id_2_caption.p")), 'rb')
+        self.val_caption_id_2_caption = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "val_caption_id_2_caption.p")), 'rb')
+        self.test_caption_id_2_caption = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "test_caption_id_2_caption.p")), 'rb')
+
         # Add all parts of the graph
+        print("Initializing the Caption Model...")
         with tf.variable_scope("CaptionModel", initializer=tf.contrib.layers.variance_scaling_initializer(factor=2.0, mode='FAN_IN', uniform=False)):
             # Use He Initialization by default
             self.add_placeholders()
@@ -89,25 +97,27 @@ class CaptionModel(object):
         """
         Builds the main part of the graph the model.
         Defines:
-            self.logits: output from decoder, used for training
-            self.predicted_ids: output ids from decoder, used for evaluation
+            self.logits: output from decoder, used for training. Shape (batch_size, T, vocab_size)
+            self.predicted_ids: output ids from decoder, used for evaluation. Shape (batch_size, T, beam_width)
         """
         # Use fully connected layer to transfer output of cnn
         self.transfer_layer = BasicTransferLayer(self.FLAGS.hidden_size)
         decoder_initial_state = transfer_layer.build_graph(self.image_features)
-        # Use LSTM to decode the caption 
+        # Use LSTM to decode the caption
         self.decoder = RNNDecoder(self.FLAGS.hidden_size,self.FLAGS.embedding_size)
         # build graph for training
         decoder_output,_ = decoder.build_graph(
             decoder_initial_state,self.caption_input_embs,self.caption_mask,"train")
         # build graph for inferring
-        infer_params={embedding:emb_matrix,start_token:3,end_token:2,length_penalty_weight=0.0}
-        infer_params['beam_width']=self.FLAGS.beam_width 
+        infer_params={embedding:emb_matrix, start_token:SOS_ID, end_token:EOS_ID, length_penalty_weight:0.0}
+        infer_params['beam_width']=self.FLAGS.beam_width
         infer_params['maximum_length']=self.FLAGS.max_caption_len
         _,predicted_ids = decoder.build_graph(
             decoder_initial_state,self.caption_input_embs,self.caption_mask,"infer",infer_params)
+
         self.logits = decoder_output
         self.predicted_ids = predicted_ids
+
 
     def add_loss(self):
         """
@@ -115,56 +125,10 @@ class CaptionModel(object):
         Uses:
           self.logits: shape (batch_size, seq_len, vocab_size)
         Defines:
-          self.loss: scalar tensor
+          self.loss: scalar tensor (averaged across both time and batch)
         """
         # Use the 'weights' parameter to mask the output sequence
         self.loss = tf.contrib.seq2seq.sequence_loss(logits=self.logits, targets=self.caption_ids_label, weights=self.caption_mask)
-
-
-    def get_captions(self, session, batch):
-        """
-        Used for evaluation. Run forward-pass only; get the most likely answer span.
-        Returns:
-            captions: list of length batch_size, each element is a caption string
-        """
-        input_feed = {self.image_features: batch.image_features}  # Only need image_features for prediction
-        output_feed = [self.predicted_ids]   # Whatever needed for prediction
-
-        _ = session.run(output_feed, input_feed)
-
-        # Decode the output
-
-        return captions # {image_id: caption string}
-
-
-    def get_val_loss(session):
-        pass
-
-
-    def check_val_metric(session, num_samples=0):
-        '''
-        Evaluate the model on the validation set.
-        Inputs:
-            num_samples: number of images to evaluate on. Evaluate on all val images if 0.
-        '''
-        captions = []  # [{"image_id": image_id, "caption": caption_str}]
-
-        # Generate all the captions and save in list 'captions'
-
-        # Dump the generated captions to json file
-        file = open(self.FLAGS.train_res_dir, 'wb')
-        json.dump(captions, file)
-        file.close()
-
-        # Evaluate using the official evaluation API (The evaluation takes ~12s for 1000 examples)
-        cocoGold = COCO(self.FLAGS.goldAnn_val_dir) # Official annotations
-        cocoRes = coco.loadRes(self.FLAGS.train_res_dir) # Prediction
-        cocoEval = COCOEvalCap(cocoGold, cocoRes)
-        cocoEval.params['image_id'] = cocoRes.getImgIds() # Evaluate on a subset of the official captions_val2014
-        cocoEval.evaluate()
-
-        scores = cocoEval.eval  # {metric_name: metric_score}
-        return scores   # Bleu_1, Bleu_2, Bleu_3, Bleu_4, METEOR, ROUGE_L, CIDEr
 
 
     def run_train_iter(self, session, batch, summary_writer):
@@ -200,11 +164,127 @@ class CaptionModel(object):
         return loss, global_step, param_norm, gradient_norm
 
 
+    def get_loss(self, session, batch):
+        '''
+        Evaluate the loss on a batch of input. Forward-pass only.
+        Needs:
+            batch.image_features
+            batch.caption_ids_input
+            batch.caption_ids_label
+            batch.caption_mask
+        Returns:
+            loss: The loss (averaged across the batch) for this batch
+        '''
+
+        input_feed = {} # Do not supply keep_prob here so it will default to 1
+        input_feed[self.image_features] = batch.image_features
+        input_feed[self.caption_ids_input] = batch.caption_ids_input
+        input_feed[self.caption_ids_label] = batch.caption_ids_label
+        input_feed[self.caption_mask] = batch.caption_mask
+
+        output_feed = [self.loss]
+        [loss] = session.run(output_feed, input_feed)
+        return loss
+
+
+    def get_captions(self, session, batch):
+        """
+        Used for evaluation. Run forward-pass on the batch.
+        Needs：
+            batch.image_id
+            batch.image_features
+        Returns:
+            captions: {imgae_id: caption_string} (size of batch.size)
+        """
+        # Only need image_features for prediction. Do not supply keep_prob here so it will default to 1
+        input_feed = {self.image_features: batch.image_features}
+        output_feed = [self.predicted_ids]
+        [predicted_ids] = session.run(output_feed, input_feed)  # (batch_size, max_len, beam_width)
+        predicted_ids = predicted_ids[:, :, 0]  # Only take the best result for each one
+
+        # Decode the output
+        captions = {}
+        for i, pred in enumerate(predicted_ids): # For each example in the batch, shape (max_len,)
+            tokens = []
+            for wid in pred:
+                if wid == EOS_ID:
+                    break
+                tokens.append(self.id2word[wid])
+
+            captions[batch.image_id[i]] = " ".join(tokens)
+
+        return captions
+
+
+    # # PROBLEM: 'eval' mode only gives the image features, 'train' mode would iterate over the dataset indefinitely
+    # # Will probably not use this
+    # def get_val_loss(self, session):
+    #     '''
+    #     Get loss for the entire val set
+    #     '''
+    #     total_loss, num_examples = 0., 0
+    #     tic = time.time()
+    #     for batch in get_batch_generator(self.word2id, image_features_map, self.train_caption_id_2_caption, self.caption_id_2_img_id, \
+    #                                     self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'eval', image_features_list):
+    #         total_loss += get_loss(session, batch)
+    #         num_examples += batch.batch_size
+    #
+    #     logging.info("Computing validation loss over {} examples took {} seconds".format(num_examples, time.time() - tic))
+    #     return total_loss / total
+
+
+    def check_metric(self, session, mode='val', num_samples=0):
+        '''
+        Evaluate the model on the validation or test set.
+        Inputs:
+            mode: should be either 'val' or 'test'
+            num_samples: number of images to evaluate on. Evaluate on all val images if 0.
+        '''
+        assert (mode == 'val' or mode == 'test')
+        captions = []  # [{"image_id": image_id, "caption": caption_str}]
+
+        # Generate all the captions and save in list 'captions'
+        tic = time.time()
+        num_seen = 0  # Record the number of samples predicted so far
+        this_caption_map = self.val_caption_id_2_caption if mode == 'val' else self.test_caption_id_2_caption
+
+        # TODO: Write codes to load the h5py file in either main.py or CaptionModel.__init__
+        # TODO: Need to resolve 'image_features_map' and 'image_features_list' for the batcher
+
+        for batch in get_batch_generator(self.word2id, image_features_map, this_caption_map, self.caption_id_2_img_id, \
+                                        self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'eval', image_features_list):
+            batch_captions = get_captions(session, batch)   # {imgae_id: caption_string}
+            for id, cap in batch_captions.items():
+                captions.append({"image_id": id, "caption": cap})
+
+            num_seen += batch.batch_size
+            if num_samples != 0 and num_seen >= num_samples:
+                break
+
+        logging.info("Predicting on {} examples took {} seconds".format(num_seen, time.time() - tic))
+
+        # Dump the generated captions to json file
+        file = open(self.FLAGS.train_res_dir, 'wb')
+        json.dump(captions, file)
+        file.close()
+
+        # Evaluate using the official evaluation API (The evaluation takes ~12s for 1000 examples)
+        tic = time.time()
+        cocoGold = COCO(self.FLAGS.goldAnn_val_dir) # Official annotations
+        cocoRes = coco.loadRes(self.FLAGS.train_res_dir) # Prediction
+        cocoEval = COCOEvalCap(cocoGold, cocoRes)
+        cocoEval.params['image_id'] = cocoRes.getImgIds() # Evaluate on a subset of the official captions_val2014
+        cocoEval.evaluate()
+        logging.info("Evaluating {} predictions took {} seconds".format(num_seen, time.time() - tic))
+
+        scores = cocoEval.eval  # {metric_name: metric_score}
+        return scores   # Bleu_1, Bleu_2, Bleu_3, Bleu_4, METEOR, ROUGE_L, CIDEr
+
+
     def train(self, session):
         """
         Main training loop.
         """
-
         # Print number of model parameters
         tic = time.time()
         params = tf.trainable_variables()
@@ -259,13 +339,13 @@ class CaptionModel(object):
 
                 # Sometimes evaluate the model
                 if global_step % self.FLAGS.eval_every == 0:
-                    # Get loss for entire val set and log to tensorboard
-                    val_loss = self.get_val_loss(session)
-                    logging.info("Epoch %d, Iter %d, Val loss: %f" % (epoch, global_step, val_loss))
-                    write_summary(val_loss, "val/loss", summary_writer, global_step)
+                    # # Get loss for entire val set and log to tensorboard
+                    # val_loss = self.get_val_loss(session)
+                    # logging.info("Epoch %d, Iter %d, Val loss: %f" % (epoch, global_step, val_loss))
+                    # write_summary(val_loss, "val/loss", summary_writer, global_step)
 
                     # Evaluate on val set and log all the metrics to tensorboard
-                    val_scores = self.check_val_metric(session, num_samples=0)
+                    val_scores = self.check_metric(session, mode='val', num_samples=0)
                     val_metric = val_scores[self.FLAGS.primary_metric]
                     for metric_name, metric_score in val_scores.items():
                         logging.info("Epoch {}, Iter {}, Val {}: {}".format(epoch, global_step, metric_name, metric_score))

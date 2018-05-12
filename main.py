@@ -138,11 +138,14 @@ def main(unused_argv):
     ####################################################################################
     ####################################################################################
 
-    elif FLAGS.mode == "official_eval":
+elif FLAGS.mode == "eval":
+        print("Starting official evaluation...")
         with tf.Session(config=config) as sess:
-            initialize_model(sess, qa_model, FLAGS.ckpt_load_dir, expect_exists=True)
-
-            # TODO: Generate answers for the entire val set, and evaluate
+            initialize_model(sess, caption_model, FLAGS.ckpt_load_dir, expect_exists=True)
+            scores = check_metric(sess, mode='val', num_samples=0)
+            # Replace mode with 'test' if want to evaluate on test set
+            for metric_name, metric_score in scores.items():
+                print("{}: {}".format(metric_name, metric_score))
 
     else:
         raise Exception("Unexpected value of FLAGS.mode: %s" % FLAGS.mode)
