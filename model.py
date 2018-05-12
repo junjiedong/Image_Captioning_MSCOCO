@@ -13,6 +13,7 @@ from coco.coco_caption_py3.pycocoevalcap.eval import COCOEvalCap
 from data_batcher import get_batch_generator
 from modules import BasicTransferLayer, RNNDecoder
 from vocab import PAD_ID, UNK_ID, EOS_ID, SOS_ID    # 0, 1, 2, 3
+import h5py
 
 
 class CaptionModel(object):
@@ -36,6 +37,7 @@ class CaptionModel(object):
         self.train_caption_id_2_caption = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "train_caption_id_2_caption.p")), 'rb')
         self.val_caption_id_2_caption = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "val_caption_id_2_caption.p")), 'rb')
         self.test_caption_id_2_caption = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "test_caption_id_2_caption.p")), 'rb')
+        self.img_features_map = h5py.File('../data/img_features.hdf5', 'r')
 
         # Add all parts of the graph
         print("Initializing the Caption Model...")
@@ -223,8 +225,8 @@ class CaptionModel(object):
         '''
         total_loss, num_examples = 0., 0
         tic = time.time()
-        for batch in get_batch_generator(self.word2id, image_features_map, self.val_caption_id_2_caption, self.caption_id_2_img_id, \
-                                        self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'train', image_features_list):
+        for batch in get_batch_generator(self.word2id, self.img_features_map, self.val_caption_id_2_caption, self.caption_id_2_img_id, \
+                                        self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'train', None):
             total_loss += get_loss(session, batch) * batch.batch_size
             num_examples += batch.batch_size
 
@@ -250,8 +252,8 @@ class CaptionModel(object):
         # TODO: Write codes to load the h5py file in either main.py or CaptionModel.__init__
         # TODO: Need to resolve 'image_features_map' and 'image_features_list' for the batcher
 
-        for batch in get_batch_generator(self.word2id, image_features_map, this_caption_map, self.caption_id_2_img_id, \
-                                        self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'eval', image_features_list):
+        for batch in get_batch_generator(self.word2id, self.img_features_map, this_caption_map, self.caption_id_2_img_id, \
+                                        self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'eval', None):
             batch_captions = get_captions(session, batch)   # {imgae_id: caption_string}
             for id, cap in batch_captions.items():
                 captions.append({"image_id": id, "caption": cap})
@@ -311,8 +313,8 @@ class CaptionModel(object):
             epoch_tic = time.time()
 
             # Loop over batches
-            for batch in get_batch_generator(self.word2id, image_features_map, self.train_caption_id_2_caption, self.caption_id_2_img_id, \
-                                            self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'train', image_features_list):
+            for batch in get_batch_generator(self.word2id, self.img_features_map, self.train_caption_id_2_caption,
+                                             self.caption_id_2_img_id, self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'train', None):
 
                 # Run training iteration
                 iter_tic = time.time()
