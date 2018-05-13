@@ -276,14 +276,14 @@ class CaptionModel(object):
         logging.info("Predicting on {} examples took {} seconds".format(num_seen, time.time() - tic))
 
         # Dump the generated captions to json file
-        file = open(self.FLAGS.train_res_dir, 'wb')
+        file = open(self.FLAGS.train_res_dir, 'w')
         json.dump(captions, file)
         file.close()
 
         # Evaluate using the official evaluation API (The evaluation takes ~12s for 1000 examples)
         tic = time.time()
         cocoGold = COCO(self.FLAGS.goldAnn_val_dir) # Official annotations
-        cocoRes = coco.loadRes(self.FLAGS.train_res_dir) # Prediction
+        cocoRes = cocoGold.loadRes(self.FLAGS.train_res_dir) # Prediction
         cocoEval = COCOEvalCap(cocoGold, cocoRes)
         cocoEval.params['image_id'] = cocoRes.getImgIds() # Evaluate on a subset of the official captions_val2014
         cocoEval.evaluate()
