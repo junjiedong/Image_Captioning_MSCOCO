@@ -48,7 +48,7 @@ tf.app.flags.DEFINE_integer("keep", 1, "How many checkpoints to keep. 0 indicate
 
 # For eval mode
 tf.app.flags.DEFINE_string("ckpt_load_dir", "", "For eval mode, which directory to load the checkpoint from. You need to specify this for eval mode.")
-tf.app.flags.DEFINE_string("json_out_path", "", "Output path for eval mode.")
+tf.app.flags.DEFINE_string("json_out_path", "", "Output path for eval mode.")   # Currently not used. Need to modify check_metric function in order to use this
 
 # Do not touch
 tf.app.flags.DEFINE_string("MAIN_DIR", "", "_")
@@ -96,12 +96,10 @@ def main(unused_argv):
     # Check the supplied arguments
     if len(unused_argv) != 1:
         raise Exception("There is a problem with how you entered flags: %s" % unused_argv)
-    if not FLAGS.experiment_name and FLAGS.mode == "train":
-        raise Exception("You need to specify either --experiment_name")
+    if not FLAGS.experiment_name:
+        raise Exception("You need to specify --experiment_name")
     if not FLAGS.ckpt_load_dir and FLAGS.mode == "eval":
         raise Exception("You need to specify a directory to load the checkpoint for eval")
-    if not FLAGS.json_out_path and FLAGS.mode == "eval":
-        raise Exception("You need to specify a directory to output the prediction file")
 
     FLAGS.MAIN_DIR = os.path.dirname(os.path.abspath(__file__))   # Absolute path of the directory containing main.py
     FLAGS.DATA_DIR = os.path.join(FLAGS.MAIN_DIR, "data")   # Absolute path of the data/ directory
@@ -145,11 +143,12 @@ def main(unused_argv):
     ####################################################################################
     ####################################################################################
 
+    # Sample evaluation command: python main.py --mode=eval --experiment_name=baseline --ckpt_load_dir=./experiments/baseline/best_checkpoint
     elif FLAGS.mode == "eval":
         print("Starting official evaluation...")
         with tf.Session(config=config) as sess:
             initialize_model(sess, caption_model, FLAGS.ckpt_load_dir, expect_exists=True)
-            scores = check_metric(sess, mode='val', num_samples=0)
+            scores = caption_model.check_metric(sess, mode='val', num_samples=0)
             # Replace mode with 'test' if want to evaluate on test set
             for metric_name, metric_score in scores.items():
                 print("{}: {}".format(metric_name, metric_score))
