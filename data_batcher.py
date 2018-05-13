@@ -275,11 +275,14 @@ def get_batch_generator(word2id, image_features_map, caption_map, caption_image_
         random.shuffle(caption_ids_list)
 
     image_ids = None
+    # NOTE: Avoid storing duplicates in the image_ids list for 'eval' mode
+    # if mode == 'eval':
+    #     image_ids = []
+    #     t_caption_ids = list(caption_map.keys())
+    #     for c in t_caption_ids:
+    #         image_ids.append(caption_image_map[c])
     if mode == 'eval':
-        image_ids = []
-        t_caption_ids = list(caption_map.keys())
-        for c in t_caption_ids:
-            image_ids.append(caption_image_map[c])
+        image_ids = list({caption_image_map[k] for k in caption_map.keys()})
 
     batches = []
 
