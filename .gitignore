@@ -8,6 +8,7 @@ coco/images/*
 coco/annotations/*
 data/*
 prepro_log.txt
+experiments/*
 
 !data/.gitkeep
 !coco/images/.gitkeep
