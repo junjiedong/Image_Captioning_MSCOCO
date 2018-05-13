@@ -64,7 +64,7 @@ class RNNDecoder(object):
 			else:
 				beam_width = infer_params['beam_width']
 				# replicate initial_state and start_token
-				initial_state = tf.contrib.seq2seq.tile_batch(initial_state,multiplier=beam_width)
+				initial_state_decoder = tf.contrib.seq2seq.tile_batch(initial_state,multiplier=beam_width)
 
 				start_tokens = tf.fill([tf.shape(initial_state)[0]],infer_params['start_token'])
 				# build beam search decoder
@@ -73,7 +73,7 @@ class RNNDecoder(object):
 					embedding=infer_params['embedding'],
 					start_tokens=start_tokens,
 					end_token=infer_params['end_token'],
-					initial_state=initial_state,
+					initial_state=initial_state_decoder,
 					beam_width=beam_width,
 					output_layer = self.projection_layer,
 					length_penalty_weight=infer_params['length_penalty_weight'])
@@ -121,6 +121,6 @@ class BasicTransferLayer(object):
 			# take average over image spatial dimension
 			fc_input = tf.reduce_mean(cnn_output,axis=1)
 			# fully connected layer with default relu activation
-			output = tf.contrib.layers.fully_connected(fc_input,self.hidden_size)
+			output = tf.contrib.layers.fully_connected(fc_input,self.hidden_size)		
 			assert output.get_shape().as_list() == [None, self.hidden_size]
 			return output

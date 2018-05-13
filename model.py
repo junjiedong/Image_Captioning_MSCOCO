@@ -15,6 +15,7 @@ from modules import BasicTransferLayer, RNNDecoder
 from vocab import PAD_ID, UNK_ID, EOS_ID, SOS_ID    # 0, 1, 2, 3
 import h5py
 import _pickle as cPickle
+import json
 
 
 class CaptionModel(object):
