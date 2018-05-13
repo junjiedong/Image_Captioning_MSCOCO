@@ -14,6 +14,7 @@ from data_batcher import get_batch_generator
 from modules import BasicTransferLayer, RNNDecoder
 from vocab import PAD_ID, UNK_ID, EOS_ID, SOS_ID    # 0, 1, 2, 3
 import h5py
+import _pickle as cPickle
 
 
 class CaptionModel(object):
@@ -31,13 +32,14 @@ class CaptionModel(object):
         self.FLAGS = FLAGS
         self.id2word = id2word
         self.word2id = word2id
+        self.vocab_size = len(id2word)  # Number of words in the vocabulary
 
         print("Reading dataset metadata...");
-        self.caption_id_2_img_id = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "caption_id_2_img_id.p")), 'rb')
-        self.train_caption_id_2_caption = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "train_caption_id_2_caption.p")), 'rb')
-        self.val_caption_id_2_caption = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "val_caption_id_2_caption.p")), 'rb')
-        self.test_caption_id_2_caption = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "test_caption_id_2_caption.p")), 'rb')
-        self.img_features_map = h5py.File('../data/img_features.hdf5', 'r')
+        self.caption_id_2_img_id = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "caption_id_2_img_id.p"), 'rb'))
+        self.train_caption_id_2_caption = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "train_caption_id_2_caption.p"), 'rb'))
+        self.val_caption_id_2_caption = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "val_caption_id_2_caption.p"), 'rb'))
+        self.test_caption_id_2_caption = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "test_caption_id_2_caption.p"), 'rb'))
+        self.img_features_map = h5py.File('./data/img_features.hdf5', 'r')
 
         # Add all parts of the graph
         print("Initializing the Caption Model...")
@@ -45,7 +47,7 @@ class CaptionModel(object):
             # Use He Initialization by default
             self.add_placeholders()
             self.add_embedding_layer(emb_matrix)
-            self.build_graph(emb_matrix)
+            self.build_graph()
             self.add_loss()
 
         # Define trainable parameters, gradient, gradient norm, and clip by gradient norm
@@ -87,15 +89,15 @@ class CaptionModel(object):
         Inputs:
           emb_matrix: The GloVe vectors, plus vectors for <SOS>, <UNK>, and <PAD>. Shape (vocab_size, embedding_size=300).
         """
-        with vs.variable_scope("embeddings"):
+        with tf.variable_scope("embeddings"):
             # Note: tf.constant means it's not a trainable parameter
-            embedding_matrix = tf.constant(emb_matrix, dtype=tf.float32, name="emb_matrix")
+            self.embedding_matrix = tf.constant(emb_matrix, dtype=tf.float32, name="emb_matrix")
 
             # Get the word embeddings for the caption input
-            self.caption_input_embs = tf.nn.embedding_lookup(embedding_matrix, self.caption_ids_input, name='caption_input_embs')
+            self.caption_input_embs = tf.nn.embedding_lookup(self.embedding_matrix, self.caption_ids_input, name='caption_input_embs')
 
 
-    def build_graph(self, emb_matrix):
+    def build_graph(self):
         """
         Builds the main part of the graph the model.
         Defines:
@@ -103,19 +105,25 @@ class CaptionModel(object):
             self.predicted_ids: output ids from decoder, used for evaluation. Shape (batch_size, T, beam_width)
         """
         # Use fully connected layer to transfer output of cnn
-        self.transfer_layer = BasicTransferLayer(self.FLAGS.hidden_size)
-        decoder_initial_state = transfer_layer.build_graph(self.image_features)
+        self.transfer_layer = BasicTransferLayer(2 * self.FLAGS.hidden_size)
+        decoder_initial_state = self.transfer_layer.build_graph(self.image_features)
         # Use LSTM to decode the caption
-        self.decoder = RNNDecoder(self.FLAGS.hidden_size,self.FLAGS.embedding_size)
+        self.decoder = RNNDecoder(self.FLAGS.hidden_size,self.vocab_size)
         # build graph for training
-        decoder_output,_ = decoder.build_graph(
+        decoder_output,_ = self.decoder.build_graph(
             decoder_initial_state,self.caption_input_embs,self.caption_mask,"train")
+        
+        assert decoder_output.get_shape().as_list() == [None, None, self.vocab_size]
+
         # build graph for inferring
-        infer_params={embedding:emb_matrix, start_token:SOS_ID, end_token:EOS_ID, length_penalty_weight:0.0}
+        infer_params={'embedding':self.embedding_matrix, 'start_token':SOS_ID, 'end_token':EOS_ID, 'length_penalty_weight':0.0}
         infer_params['beam_width']=self.FLAGS.beam_width
         infer_params['maximum_length']=self.FLAGS.max_caption_len
-        _,predicted_ids = decoder.build_graph(
+        _,predicted_ids = self.decoder.build_graph(
             decoder_initial_state,self.caption_input_embs,self.caption_mask,"infer",infer_params)
+
+        assert predicted_ids.get_shape().as_list() == [None, None, self.FLAGS.beam_width]
+
 
         self.logits = decoder_output
         self.predicted_ids = predicted_ids
@@ -130,7 +138,9 @@ class CaptionModel(object):
           self.loss: scalar tensor (averaged across both time and batch)
         """
         # Use the 'weights' parameter to mask the output sequence
-        self.loss = tf.contrib.seq2seq.sequence_loss(logits=self.logits, targets=self.caption_ids_label, weights=self.caption_mask)
+        padding = [[0, 0], [0, self.FLAGS.max_caption_len - tf.shape(self.logits)[1]], [0, 0]]
+        self.logits = tf.pad(self.logits, padding, "CONSTANT")
+        self.loss = tf.contrib.seq2seq.sequence_loss(logits=self.logits, targets=self.caption_ids_label, weights=tf.cast(self.caption_mask, tf.float32))
 
 
     def run_train_iter(self, session, batch, summary_writer):
@@ -156,12 +166,12 @@ class CaptionModel(object):
         input_feed[self.keep_prob] = 1.0 - self.FLAGS.dropout # apply dropout
 
         # output_feed contains the things we want to fetch.
-        output_feed = [self.updates, self.summaries, self.loss, self.global_step, self.param_norm, self.gradient_norm]
-        # Run the model
-        [_, summaries, loss, global_step, param_norm, gradient_norm] = session.run(output_feed, input_feed)
+        # output_feed = [self.updates, self.summaries, self.loss, self.global_step, self.param_norm, self.gradient_norm]
+        output_feed = [self.updates, self.loss, self.global_step, self.param_norm, self.gradient_norm]
+        [_, loss, global_step, param_norm, gradient_norm] = session.run(output_feed, input_feed)
 
         # All summaries in the graph are added to Tensorboard
-        summary_writer.add_summary(summaries, global_step)
+        # summary_writer.add_summary(summaries, global_step)
 
         return loss, global_step, param_norm, gradient_norm
 
@@ -227,11 +237,11 @@ class CaptionModel(object):
         tic = time.time()
         for batch in get_batch_generator(self.word2id, self.img_features_map, self.val_caption_id_2_caption, self.caption_id_2_img_id, \
                                         self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'train', None):
-            total_loss += get_loss(session, batch) * batch.batch_size
+            total_loss += self.get_loss(session, batch) * batch.batch_size
             num_examples += batch.batch_size
 
         logging.info("Computing validation loss over {} examples took {} seconds".format(num_examples, time.time() - tic))
-        return total_loss / total
+        return total_loss / num_examples
 
 
     def check_metric(self, session, mode='val', num_samples=0):
@@ -254,7 +264,7 @@ class CaptionModel(object):
 
         for batch in get_batch_generator(self.word2id, self.img_features_map, this_caption_map, self.caption_id_2_img_id, \
                                         self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'eval', None):
-            batch_captions = get_captions(session, batch)   # {imgae_id: caption_string}
+            batch_captions = self.get_captions(session, batch)   # {imgae_id: caption_string}
             for id, cap in batch_captions.items():
                 captions.append({"image_id": id, "caption": cap})
 
@@ -313,7 +323,7 @@ class CaptionModel(object):
             epoch_tic = time.time()
 
             # Loop over batches
-            for batch in get_batch_generator(self.word2id, self.img_features_map, self.train_caption_id_2_caption,
+            for batch in get_batch_generator(self.word2id, self.img_features_map, self.val_caption_id_2_caption,
                                              self.caption_id_2_img_id, self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'train', None):
 
                 # Run training iteration
@@ -333,6 +343,7 @@ class CaptionModel(object):
                     logging.info(
                         'epoch %d, iter %d, loss %.5f, smoothed loss %.5f, grad norm %.5f, param norm %.5f, batch time %.3f' %
                         (epoch, global_step, loss, exp_loss, grad_norm, param_norm, iter_time))
+                    write_summary(loss, "train/loss", summary_writer, global_step)
 
                 # Sometimes save model
                 if global_step % self.FLAGS.save_every == 0:

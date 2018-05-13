@@ -3,6 +3,7 @@ This file contains basic model components.
 """
 
 import tensorflow as tf
+import numpy as np
 
 class RNNDecoder(object):
 	"""
@@ -11,7 +12,7 @@ class RNNDecoder(object):
 	the same RNN cell and output layer with inference.
 	Refer to the decoder in tensorflow NMT model: https://github.com/tensorflow/nmt
 	"""
-	def __init__(self,hidden_size,embedding_size,num_layers=1):
+	def __init__(self,hidden_size,vocab_size,num_layers=1):
 		"""
 		Inputs:
 			hidden_size: int. Hidden size of the RNN
@@ -19,17 +20,18 @@ class RNNDecoder(object):
 		"""
 		self.hidden_size = hidden_size
 		self.num_layers = num_layers
-		self.rnn_cell = tf.contrib.cudnn_rnn.CudnnLSTM(
-			num_layers=self.num_layers,
-			num_units=hidden_size)
+		# self.rnn_cell = tf.contrib.cudnn_rnn.CudnnLSTM(
+		# 	num_layers=self.num_layers,
+		# 	num_units=hidden_size)
+		self.rnn_cell = tf.contrib.rnn.BasicLSTMCell(num_units=hidden_size, state_is_tuple=False)
 		self.projection_layer = tf.layers.Dense(
-			embedding_size,use_bias=False,name='output_projection')
+			vocab_size,use_bias=False,name='output_projection')
 
 	def build_graph(self,initial_state,decoder_inputs,masks,mode,infer_params=None):
 		"""
 		Inputs:
           	initial_state: Tensor shape (batch_size, hidden_size)
-		  	decoder_inputs: Tensor shape (batch_size, max_len, embedding_size)
+		  	decoder_inputs: Tensor shape (batch_size, max_len, vocab-size)
 		  	masks: Tensor shape (batch_size, max_len)
             	Has 1s where there is real input, 0s where there's padding.
           	mode: "train" or "infer"
@@ -40,29 +42,31 @@ class RNNDecoder(object):
 		  		'start_token' and 'end_token' are ids of the start/end token in embedding
 		Outputs:
 			(rnn_output,predicted_ids)
-			rnn_output: Tensor shape (batch_size, max_len, embedding_size); None for 'infer' mode
+			rnn_output: Tensor shape (batch_size, max_len, vocab_size); None for 'infer' mode
 			predicted_ids: Tensor shape (batch_size,?); None for 'train' mode
 		"""
 		with tf.variable_scope("decoder") as decoder_scope:
 			# Build graph for training
-			if mode = "train":
+			if mode == "train":
 				# change masks to real sequence length of decoder inputs: Tensor shape (batch_size,)
 				sequence_length = tf.reduce_sum(masks,axis=1)
+				assert sequence_length.get_shape().as_list() == [None]
 				# build decoder
 				helper =  tf.contrib.seq2seq.TrainingHelper(decoder_inputs,sequence_length)
 				basic_decoder =  tf.contrib.seq2seq.BasicDecoder(
-					self.rnn_cell,helper,initial_state,
+					self.rnn_cell, helper, initial_state,
 					output_layer = self.projection_layer)
 				# dynamic decoding
 				# possible options: impute_finished, maximum_iterations, swap_memory
-				outputs,_= tf.contrib.seq2seq.dynamic_decode(basic_decoder,scope=decoder_scope)
+				outputs, _, _ = tf.contrib.seq2seq.dynamic_decode(basic_decoder,scope=decoder_scope)
 				return outputs.rnn_output, None
 			# Build graph for testing
 			else:
 				beam_width = infer_params['beam_width']
 				# replicate initial_state and start_token
 				initial_state = tf.contrib.seq2seq.tile_batch(initial_state,multiplier=beam_width)
-				start_tokens = tf.fill(tf.shape(decoder_inputs)[0],infer_params['start_token'])
+
+				start_tokens = tf.fill([tf.shape(initial_state)[0]],infer_params['start_token'])
 				# build beam search decoder
 				beam_decoder =  tf.contrib.seq2seq.BeamSearchDecoder(
 					cell=self.rnn_cell,
@@ -74,7 +78,7 @@ class RNNDecoder(object):
 					output_layer = self.projection_layer,
 					length_penalty_weight=infer_params['length_penalty_weight'])
 				# dynamic decoding
-				outputs,_= tf.contrib.seq2seq.dynamic_decode(
+				outputs,_, _= tf.contrib.seq2seq.dynamic_decode(
 					beam_decoder,scope=decoder_scope,maximum_iterations=infer_params['maximum_length'])
 				return None, outputs.predicted_ids
 
@@ -97,7 +101,7 @@ def masked_softmax(logits, mask):
     exp_mask = (1 - tf.cast(mask, 'float')) * (-1e30) # -large where there's padding, 0 elsewhere
     masked_logits = tf.add(logits, exp_mask) # where there's padding, set logits to -large
     prob_dist = tf.nn.softmax(masked_logits, 2) # apply softmax at embedding dimension
-	return masked_logits, prob_dist
+    return masked_logits, prob_dist
 
 class BasicTransferLayer(object):
 	"""
@@ -115,7 +119,8 @@ class BasicTransferLayer(object):
 		"""
 		with tf.variable_scope("TransferLayer"):
 			# take average over image spatial dimension
-			fc_input = tf.reduced_mean(cnn_output,axis=1)
+			fc_input = tf.reduce_mean(cnn_output,axis=1)
 			# fully connected layer with default relu activation
 			output = tf.contrib.layers.fully_connected(fc_input,self.hidden_size)
+			assert output.get_shape().as_list() == [None, self.hidden_size]
 			return output
