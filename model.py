@@ -40,7 +40,30 @@ class CaptionModel(object):
         self.train_caption_id_2_caption = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "train_caption_id_2_caption.p"), 'rb'))
         self.val_caption_id_2_caption = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "val_caption_id_2_caption.p"), 'rb'))
         self.test_caption_id_2_caption = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "test_caption_id_2_caption.p"), 'rb'))
-        self.img_features_map = h5py.File('./data/img_features.hdf5', 'r')
+
+        # Load the hdf5 file
+        load_test = False   # Whether to load in the test data (can save ~4% of RAM usage when False)
+        test_img_set = {str(self.caption_id_2_img_id[cpid]) for cpid in self.test_caption_id_2_caption}
+        print("Number of images in test set: {}".format(len(test_img_set)))
+
+        timg_features_map = h5py.File('./data/img_features.hdf5', 'r')
+        if FLAGS.data_source == "ssd":
+            print("Data will be loaded from SSD during training.")
+            self.img_features_map = timg_features_map
+        else:
+            print("Start loading all data into RAM. Be patient!")
+            self.img_features_map = {}
+            num_dumped_test = 0
+            for i, k in enumerate(timg_features_map.keys()):
+                if load_test or (k not in test_img_set):
+                    self.img_features_map[k] = np.array(timg_features_map[k])
+                if k in test_img_set:
+                    num_dumped_test += 1
+                if i % 100 == 0:
+                    print("{} images loaded...".format(i))  # printed i off by one, don't care though
+            print("Finished loading all the requested data into RAM.")
+            if not load_test:
+                print("Did not load in data for the {} test set images".format(num_dumped_test))
 
         # Add all parts of the graph
         print("Initializing the Caption Model...")
@@ -113,7 +136,7 @@ class CaptionModel(object):
         # build graph for training
         decoder_output,_ = self.decoder.build_graph(
             decoder_initial_state,self.caption_input_embs,self.caption_mask,"train")
-        
+
         assert decoder_output.get_shape().as_list() == [None, None, self.vocab_size]
 
         # build graph for inferring
@@ -237,7 +260,7 @@ class CaptionModel(object):
         total_loss, num_examples = 0., 0
         tic = time.time()
         for batch in get_batch_generator(self.word2id, self.img_features_map, self.val_caption_id_2_caption, self.caption_id_2_img_id, \
-                                        self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'train', None):
+                                        self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'train', None, self.FLAGS.data_source):
             total_loss += self.get_loss(session, batch) * batch.batch_size
             num_examples += batch.batch_size
 
@@ -260,11 +283,8 @@ class CaptionModel(object):
         num_seen = 0  # Record the number of samples predicted so far
         this_caption_map = self.val_caption_id_2_caption if mode == 'val' else self.test_caption_id_2_caption
 
-        # TODO: Write codes to load the h5py file in either main.py or CaptionModel.__init__
-        # TODO: Need to resolve 'image_features_map' and 'image_features_list' for the batcher
-
         for batch in get_batch_generator(self.word2id, self.img_features_map, this_caption_map, self.caption_id_2_img_id, \
-                                        self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'eval', None):
+                                        self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'eval', None, self.FLAGS.data_source):
             batch_captions = self.get_captions(session, batch)   # {imgae_id: caption_string}
             for id, cap in batch_captions.items():
                 captions.append({"image_id": id, "caption": cap})
@@ -324,8 +344,8 @@ class CaptionModel(object):
             epoch_tic = time.time()
 
             # Loop over batches
-            for batch in get_batch_generator(self.word2id, self.img_features_map, self.val_caption_id_2_caption,
-                                             self.caption_id_2_img_id, self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'train', None):
+            for batch in get_batch_generator(self.word2id, self.img_features_map, self.train_caption_id_2_caption,
+                                             self.caption_id_2_img_id, self.FLAGS.batch_size, self.FLAGS.max_caption_len, 'train', None, self.FLAGS.data_source):
 
                 # Run training iteration
                 iter_tic = time.time()

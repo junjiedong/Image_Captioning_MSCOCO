@@ -84,7 +84,7 @@ def padded(token_batch, batch_pad=0):
     return [token_list + [PAD_ID] * (maxlen - len(token_list)) for token_list in token_batch]
 
 
-def refill_batches(batches, word2id, image_features_map, caption_map, caption_image_map, caption_ids_list, batch_size, caption_len, start_index):
+def refill_batches(batches, word2id, image_features_map, caption_map, caption_image_map, caption_ids_list, batch_size, caption_len, start_index, data_source):
     """
     Adds more batches into the "batches" list. For training.
 
@@ -115,7 +115,11 @@ def refill_batches(batches, word2id, image_features_map, caption_map, caption_im
             continue
 
         current_caption_string = caption_map[current_caption_id]
-        current_image_features = image_features_map[str(current_image_id)]
+        # NOTE: CHANGE for SSD/RAM
+        if data_source == "ram":
+            current_image_features = image_features_map[str(current_image_id)]
+        else:
+            current_image_features = image_features_map[str(current_image_id)].value
 
         # Convert tokens to word ids
         _, caption_ids = sentence_to_token_ids(current_caption_string, word2id)
@@ -154,7 +158,7 @@ def refill_batches(batches, word2id, image_features_map, caption_map, caption_im
 
 
 
-def refill_batches_eval(batches, image_features_map, image_ids_list, batch_size, start_index):
+def refill_batches_eval(batches, image_features_map, image_ids_list, batch_size, start_index, data_source):
     """
     Adds more batches into the "batches" list, used in evaluation
 
@@ -179,7 +183,11 @@ def refill_batches_eval(batches, image_features_map, image_ids_list, batch_size,
             index += 1
             continue
 
-        current_image_features = image_features_map[str(current_image_id)]
+        # NOTE: CHANGE for SSD/RAM
+        if data_source == "ram":
+            current_image_features = image_features_map[str(current_image_id)]
+        else:
+            current_image_features = image_features_map[str(current_image_id)].value
 
         examples.append((current_image_features, current_image_id))
 
@@ -253,7 +261,7 @@ def refill_batches_test(batches, image_features_list, batch_size, start_index):
     return index
 
 
-def get_batch_generator(word2id, image_features_map, caption_map, caption_image_map, batch_size, caption_len, mode, image_features_list):
+def get_batch_generator(word2id, image_features_map, caption_map, caption_image_map, batch_size, caption_len, mode, image_features_list, data_source):
     """
     This function returns a generator object that yields batches.
     The last batch in the dataset will be a partial batch.
@@ -276,11 +284,6 @@ def get_batch_generator(word2id, image_features_map, caption_map, caption_image_
 
     image_ids = None
     # NOTE: Avoid storing duplicates in the image_ids list for 'eval' mode
-    # if mode == 'eval':
-    #     image_ids = []
-    #     t_caption_ids = list(caption_map.keys())
-    #     for c in t_caption_ids:
-    #         image_ids.append(caption_image_map[c])
     if mode == 'eval':
         image_ids = list({caption_image_map[k] for k in caption_map.keys()})
 
@@ -292,9 +295,9 @@ def get_batch_generator(word2id, image_features_map, caption_map, caption_image_
         if len(batches) == 0: # add more batches
             if mode == 'train':
                 start_index = refill_batches(batches, word2id, image_features_map, caption_map, caption_image_map,
-                                             caption_ids_list, batch_size, caption_len, start_index)
+                                             caption_ids_list, batch_size, caption_len, start_index, data_source)
             elif mode == 'eval':
-                start_index = refill_batches_eval(batches, image_features_map, image_ids, batch_size, start_index)
+                start_index = refill_batches_eval(batches, image_features_map, image_ids, batch_size, start_index, data_source)
             else:
                 start_index = refill_batches_test(batches, image_features_list, batch_size, start_index)
         if len(batches) == 0:
@@ -315,13 +318,15 @@ def get_batch_generator(word2id, image_features_map, caption_map, caption_image_
 
             caption_mask = (caption_ids_input != PAD_ID).astype(np.int32)
 
-            image_features = np.array(image_features)
+            if data_source != "ram":
+                image_features = np.array(image_features)
 
             # Make into a Batch object
             batch = Batch(image_features, caption_ids_input, caption_ids_label, caption_mask, image_id)
         else:
             (image_features, image_id) = batches.pop(0)
-            image_features = np.array(image_features)
+            if data_source != "ram":
+                image_features = np.array(image_features)
             batch = Batch(image_features, None, None, None, image_id)
 
         yield batch

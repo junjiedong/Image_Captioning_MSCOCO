@@ -20,6 +20,7 @@ logging.basicConfig(level=logging.INFO)
 
 # High-level options
 tf.app.flags.DEFINE_integer("gpu", 0, "Which GPU to use, if you have multiple.")
+tf.app.flags.DEFINE_string("data_source", "", "Whether to load all data into RAM (~50G). Available options: ram / ssd")
 tf.app.flags.DEFINE_string("mode", "train", "Available modes: train / eval")
 tf.app.flags.DEFINE_string("experiment_name", "", "Unique name for your experiment. This will create a directory by this name in the experiments/ directory, which will hold all data related to this experiment")
 tf.app.flags.DEFINE_integer("num_epochs", 0, "Number of epochs to train. 0 means train indefinitely")
@@ -35,22 +36,21 @@ tf.app.flags.DEFINE_integer("image_dim2", 1536, "Dimension of image feature for 
 tf.app.flags.DEFINE_float("learning_rate", 0.001, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 5.0, "Clip gradients to this norm.")
 tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
-tf.app.flags.DEFINE_integer("batch_size", 100, "Batch size to use")
-tf.app.flags.DEFINE_integer("hidden_size", 500, "Size of the RNN states")
+tf.app.flags.DEFINE_integer("batch_size", 128, "Batch size to use")
+tf.app.flags.DEFINE_integer("hidden_size", 512, "Size of the RNN states")
 tf.app.flags.DEFINE_integer("beam_width", 10, "Beam width of beam search decoder")
 
-
 # How often to print, save, eval
-tf.app.flags.DEFINE_integer("print_every", 1, "How many iterations to do per print.")
-tf.app.flags.DEFINE_integer("save_every", 500, "How many iterations to do per save.")
-tf.app.flags.DEFINE_integer("eval_every", 5, "How many iterations to do per evaluating on dev set. Warning: this is fairly time-consuming so don't do it too often.")
+tf.app.flags.DEFINE_integer("print_every", 20, "How many iterations to do per print.")
+tf.app.flags.DEFINE_integer("save_every", 1000, "How many iterations to do per save.")
+tf.app.flags.DEFINE_integer("eval_every", 1000, "How many iterations to do per evaluating on dev set. Warning: this is fairly time-consuming so don't do it too often.")
 tf.app.flags.DEFINE_integer("keep", 1, "How many checkpoints to keep. 0 indicates keep all (you shouldn't need to do keep all though - it's very storage intensive).")
 
 # For eval mode
 tf.app.flags.DEFINE_string("ckpt_load_dir", "", "For eval mode, which directory to load the checkpoint from. You need to specify this for eval mode.")
 tf.app.flags.DEFINE_string("json_out_path", "", "Output path for eval mode.")   # Currently not used. Need to modify check_metric function in order to use this
 
-# Do not touch
+# Placeholders. Do not touch
 tf.app.flags.DEFINE_string("MAIN_DIR", "", "_")
 tf.app.flags.DEFINE_string("DATA_DIR", "", "_")
 tf.app.flags.DEFINE_string("EXPERIMENTS_DIR", "", "_")
@@ -100,6 +100,8 @@ def main(unused_argv):
         raise Exception("You need to specify --experiment_name")
     if not FLAGS.ckpt_load_dir and FLAGS.mode == "eval":
         raise Exception("You need to specify a directory to load the checkpoint for eval")
+    if (not FLAGS.data_source) or (FLAGS.data_source != "ssd" and FLAGS.data_source != "ram"):
+        raise Exception("You need to specify how to load data. Choose from ram and ssd.")
 
     FLAGS.MAIN_DIR = os.path.dirname(os.path.abspath(__file__))   # Absolute path of the directory containing main.py
     FLAGS.DATA_DIR = os.path.join(FLAGS.MAIN_DIR, "data")   # Absolute path of the data/ directory
