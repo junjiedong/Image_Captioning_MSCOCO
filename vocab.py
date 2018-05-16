@@ -30,7 +30,7 @@ EOS_ID = 2
 SOS_ID = 3
 
 
-def get_glove(glove_path, glove_dim):
+def get_glove(glove_path, glove_dim, random_init=False):
     """Reads from original GloVe .txt file and returns embedding matrix and
     mappings from words to word ids.
 
@@ -55,7 +55,6 @@ def get_glove(glove_path, glove_dim):
     word2id = {}
     id2word = {}
 
-    random_init = True
     # randomly initialize the special tokens
     if random_init:
         emb_matrix[:len(_START_VOCAB), :] = np.random.randn(len(_START_VOCAB), glove_dim)

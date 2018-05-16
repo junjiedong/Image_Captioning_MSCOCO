@@ -12,7 +12,7 @@ class RNNDecoder(object):
 	the same RNN cell and output layer with inference.
 	Refer to the decoder in tensorflow NMT model: https://github.com/tensorflow/nmt
 	"""
-	def __init__(self,hidden_size,vocab_size,num_layers=1):
+	def __init__(self, hidden_size, vocab_size, keep_prob, num_layers=1):
 		"""
 		Inputs:
 			hidden_size: int. Hidden size of the RNN
@@ -24,6 +24,8 @@ class RNNDecoder(object):
 		# 	num_layers=self.num_layers,
 		# 	num_units=hidden_size)
 		self.rnn_cell = tf.contrib.rnn.BasicLSTMCell(num_units=hidden_size, state_is_tuple=False)
+		# NOTE: Add dropout
+		self.rnn_cell = tf.contrib.rnn.DropoutWrapper(self.rnn_cell, input_keep_prob=keep_prob, output_keep_prob=keep_prob, state_keep_prob=1.0)
 		self.projection_layer = tf.layers.Dense(
 			vocab_size,use_bias=False,name='output_projection')
 
@@ -107,8 +109,9 @@ class BasicTransferLayer(object):
 	"""
 	Module to combine CNN with output decoder
 	"""
-	def __init__(self,hidden_size):
+	def __init__(self,hidden_size, keep_prob):
 		self.hidden_size = hidden_size
+		self.keep_prob = keep_prob	# keep_prob is a placeholder
 
 	def build_graph(self,cnn_output):
 		"""
@@ -121,6 +124,9 @@ class BasicTransferLayer(object):
 			# take average over image spatial dimension
 			fc_input = tf.reduce_mean(cnn_output,axis=1)
 			# fully connected layer with default relu activation
-			output = tf.contrib.layers.fully_connected(fc_input,self.hidden_size)		
+			output = tf.contrib.layers.fully_connected(fc_input,self.hidden_size)
 			assert output.get_shape().as_list() == [None, self.hidden_size]
+			# NOTE: Add dropout
+			output = tf.nn.dropout(output, self.keep_prob)
+
 			return output

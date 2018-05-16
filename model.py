@@ -41,9 +41,11 @@ class CaptionModel(object):
         self.val_caption_id_2_caption = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "val_caption_id_2_caption.p"), 'rb'))
         self.test_caption_id_2_caption = cPickle.load(open(os.path.join(FLAGS.DATA_DIR, "test_caption_id_2_caption.p"), 'rb'))
 
-        # Load the hdf5 file
-        load_test = False   # Whether to load in the test data (can save ~4% of RAM usage when False)
+        # Load the hdf5 file (Always load val set; train/test depends)
+        load_test = (FLAGS.mode == "eval")   # Whether to load in the test data
         test_img_set = {str(self.caption_id_2_img_id[cpid]) for cpid in self.test_caption_id_2_caption}
+        train_img_set = {str(self.caption_id_2_img_id[cpid]) for cpid in self.train_caption_id_2_caption}
+        print("Number of images in training set: {}".format(len(train_img_set)))
         print("Number of images in test set: {}".format(len(test_img_set)))
 
         timg_features_map = h5py.File('./data/img_features.hdf5', 'r')
@@ -55,13 +57,17 @@ class CaptionModel(object):
             self.img_features_map = {}
             num_dumped_test = 0
             for i, k in enumerate(timg_features_map.keys()):
+                if FLAGS.mode == "eval" and k in train_img_set: # Don't load the training data in eval mode
+                    continue
                 if load_test or (k not in test_img_set):
                     self.img_features_map[k] = np.array(timg_features_map[k])
                 if k in test_img_set:
                     num_dumped_test += 1
                 if i % 100 == 0:
-                    print("{} images loaded...".format(i))  # printed i off by one, don't care though
+                    print("{} images processed...".format(i))  # printed i off by one, don't care though
             print("Finished loading all the requested data into RAM.")
+            if FLAGS.mode == "eval":
+                print("Did not load in training set data")
             if not load_test:
                 print("Did not load in data for the {} test set images".format(num_dumped_test))
 
@@ -114,8 +120,13 @@ class CaptionModel(object):
           emb_matrix: The GloVe vectors, plus vectors for <SOS>, <UNK>, and <PAD>. Shape (vocab_size, embedding_size=300).
         """
         with tf.variable_scope("embeddings"):
-            # Note: tf.constant means it's not a trainable parameter
-            self.embedding_matrix = tf.constant(emb_matrix, dtype=tf.float32, name="emb_matrix")
+            if self.FLAGS.special_token == "train":
+                trainable_emb = tf.Variable(initial_value=emb_matrix[:4,:], trainable=True, name='trainable_emb_matrix', dtype=tf.float32)
+                constant_emb = tf.constant(emb_matrix[4:,:], dtype=tf.float32, name="constant_emb_matrix")
+                self.embedding_matrix = tf.concat(values=[trainable_emb, constant_emb], axis=0)
+            else:
+                # Note: tf.constant means it's not a trainable parameter
+                self.embedding_matrix = tf.constant(emb_matrix, dtype=tf.float32, name="emb_matrix")
 
             # Get the word embeddings for the caption input
             self.caption_input_embs = tf.nn.embedding_lookup(self.embedding_matrix, self.caption_ids_input, name='caption_input_embs')
@@ -129,10 +140,10 @@ class CaptionModel(object):
             self.predicted_ids: output ids from decoder, used for evaluation. Shape (batch_size, T, beam_width)
         """
         # Use fully connected layer to transfer output of cnn
-        self.transfer_layer = BasicTransferLayer(2 * self.FLAGS.hidden_size)
+        self.transfer_layer = BasicTransferLayer(2 * self.FLAGS.hidden_size, self.keep_prob)
         decoder_initial_state = self.transfer_layer.build_graph(self.image_features)
         # Use LSTM to decode the caption
-        self.decoder = RNNDecoder(self.FLAGS.hidden_size,self.vocab_size)
+        self.decoder = RNNDecoder(self.FLAGS.hidden_size, self.vocab_size, self.keep_prob)
         # build graph for training
         decoder_output,_ = self.decoder.build_graph(
             decoder_initial_state,self.caption_input_embs,self.caption_mask,"train")

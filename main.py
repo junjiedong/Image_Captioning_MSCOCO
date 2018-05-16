@@ -35,10 +35,11 @@ tf.app.flags.DEFINE_integer("image_dim2", 1536, "Dimension of image feature for 
 # Hyperparameters
 tf.app.flags.DEFINE_float("learning_rate", 0.001, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 5.0, "Clip gradients to this norm.")
-tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
+tf.app.flags.DEFINE_float("dropout", 0.2, "Fraction of units randomly dropped on non-recurrent connections.")
 tf.app.flags.DEFINE_integer("batch_size", 128, "Batch size to use")
 tf.app.flags.DEFINE_integer("hidden_size", 512, "Size of the RNN states")
-tf.app.flags.DEFINE_integer("beam_width", 10, "Beam width of beam search decoder")
+tf.app.flags.DEFINE_integer("beam_width", 3, "Beam width of beam search decoder")
+tf.app.flags.DEFINE_string("special_token", "zero", "Whether to make UNK and SOS trainable. Available options: zero/train")
 
 # How often to print, save, eval
 tf.app.flags.DEFINE_integer("print_every", 20, "How many iterations to do per print.")
@@ -115,7 +116,8 @@ def main(unused_argv):
     FLAGS.goldAnn_val_dir = os.path.join(FLAGS.MAIN_DIR, "coco/annotations/captions_val2014.json")
 
     # Load embedding matrix and vocab mappings
-    emb_matrix, word2id, id2word = get_glove(FLAGS.glove_path,300)
+    random_init = (FLAGS.special_token == "train")
+    emb_matrix, word2id, id2word = get_glove(FLAGS.glove_path, 300, random_init=random_init)
 
     # Initialize model
     caption_model = CaptionModel(FLAGS, id2word, word2id, emb_matrix)
