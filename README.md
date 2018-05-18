@@ -15,9 +15,17 @@ Image Captioning on Microsoft Coco Dataset
 # Train
 python main.py --mode=train --experiment_name=baseline --data_source=ram/ssd
 
-Options: --primary_metric, --num_epochs, --learning_rate, --dropout, --batch_size, --hidden_size, --beam_width, --print_every, --save_every, --eval_every
+Options: --primary_metric, --num_epochs, --learning_rate, --dropout, --batch_size, --hidden_size, --beam_width, --special_token, --print_every, --save_every, --eval_every
 
 # Evaluate
 python main.py --mode=eval --experiment_name=baseline --ckpt_load_dir=./experiments/baseline/best_checkpoint --data_source=ram/ssd
 
-Note: The optimal beam width can be tuned by only running in eval mode for multiple times
+Note: The optimal beam width can be tuned by only running in eval mode for multiple times (although using the best beam width for early stopping during training might give slightly better performance)
+
+# Baseline Experiments
+For the baseline model, lr = 2e-4, p_drop = 0.2, hidden_size = 512 is a good set of hyperparameters. It was also found that adding bias in the final projection layer doesn't affect model performance at all. Beam width 3 outperforms all other values - 3 is also what Google's Show-and-Tell and Salesforce's Knowing-When-to-Look used. These hyperparameters are now set to be default in main.py
+
+As of 05-17, the best baseline model achieves CIDEr 93.9, Bleu-4 30.5, METEOR 24.7, ROUGE 52.4
+
+# Next Steps
+Attention Model. Salesforce's "Knowing When to Look" seems like a good choice. Unlike many other visual attention models, its methods are more like those found in modern NLP models.

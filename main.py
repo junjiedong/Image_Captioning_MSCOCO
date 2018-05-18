@@ -33,7 +33,7 @@ tf.app.flags.DEFINE_integer("image_dim1", 64, "Number of regions (eg. 8*8=64 for
 tf.app.flags.DEFINE_integer("image_dim2", 1536, "Dimension of image feature for each region (eg. 1536 for InceptionRes)")
 
 # Hyperparameters
-tf.app.flags.DEFINE_float("learning_rate", 0.001, "Learning rate.")
+tf.app.flags.DEFINE_float("learning_rate", 0.0002, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 5.0, "Clip gradients to this norm.")
 tf.app.flags.DEFINE_float("dropout", 0.2, "Fraction of units randomly dropped on non-recurrent connections.")
 tf.app.flags.DEFINE_integer("batch_size", 128, "Batch size to use")
