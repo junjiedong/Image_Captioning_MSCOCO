@@ -18,7 +18,6 @@ class BasicAttentionLayer(base.Layer):
 		Memory (i.e. image_features) - shape [None, image_dim1, hidden_size]
 	Outputs:
 		logits - shape [None, vocab_size] or [None, beam_width, vocab_size]
-
 	"""
 
 	def __init__(self, output_units, memory, keep_prob, beam_width, name=None, **kwargs):
@@ -36,6 +35,8 @@ class BasicAttentionLayer(base.Layer):
 		self.memory_tile = tf.reshape(self.memory_tile, [-1, self.image_dim1, self.hidden_size])
 		assert self.memory_tile.get_shape().as_list() == [None, self.image_dim1, self.hidden_size]
 
+		self.attn_func = "trilinear"  # Options: trilinear / tanh
+
 	def build(self, input_shape):
 		"""
 		Called once from __call__, when we know the shapes of of inputs and 'dtype'
@@ -44,9 +45,16 @@ class BasicAttentionLayer(base.Layer):
 		"""
 		input_shape = tensor_shape.TensorShape(input_shape)
 
-		self.w_m = self.add_variable('kernel_attn_m', shape=[self.hidden_size], dtype=tf.float32, trainable=True)
-		self.w_x = self.add_variable('kernel_attn_x', shape=[self.hidden_size], dtype=tf.float32, trainable=True)
-		self.w_dot = self.add_variable('kernel_attn_dot', shape=[self.hidden_size], dtype=tf.float32, trainable=True)
+		if self.attn_func == "trilinear":
+			self.w_m = self.add_variable('kernel_attn_m', shape=[self.hidden_size], dtype=tf.float32, trainable=True)
+			self.w_x = self.add_variable('kernel_attn_x', shape=[self.hidden_size], dtype=tf.float32, trainable=True)
+			self.w_dot = self.add_variable('kernel_attn_dot', shape=[self.hidden_size], dtype=tf.float32, trainable=True)
+		elif self.attn_func == "tanh":
+			self.w_x = self.add_variable('kernel_attn_x', shape=[self.hidden_size, self.image_dim1], dtype=tf.float32, trainable=True)
+			self.w_m = self.add_variable('kernel_attn_m', shape=[self.hidden_size, self.image_dim1], dtype=tf.float32, trainable=True)
+			self.w_dot = self.add_variable('kernel_attn_dot', shape=[self.image_dim1], dtype=tf.float32, trainable=True)
+		else:
+			raise Exception("Invalid attention function option!")
 
 		self.w_dense = self.add_variable('kernel_dense', shape=[3*self.hidden_size, self.hidden_size], dtype=tf.float32, trainable=True)
 		self.b_dense = self.add_variable('bias_dense', shape=[self.hidden_size], initializer=tf.zeros_initializer(), dtype=tf.float32, trainable=True)
@@ -70,18 +78,28 @@ class BasicAttentionLayer(base.Layer):
 		X = inputs
 		M = self.memory_tile if beam else self.memory
 
-		# Calculate attention similarity (trilinear-sim) vector - shape (N, k)
-		XM = tf.multiply(tf.expand_dims(X, 1), M)	# (N, k, h)
-		X_logits = tf.tensordot(X, self.w_x, axes=[[1], [0]])  # (N,)
-		M_logits = tf.tensordot(M, self.w_m, axes=[[2], [0]])  # (N, k)
-		XM_logits = tf.tensordot(XM, self.w_dot, axes=[[2], [0]])  # (N, k)
-		attn_logits = tf.expand_dims(X_logits, 1) + M_logits + XM_logits
-		assert XM.get_shape().as_list() == [None, self.image_dim1, self.hidden_size]
-		assert X_logits.get_shape().as_list() == [None]
-		assert M_logits.get_shape().as_list() == [None, self.image_dim1]
-		assert XM_logits.get_shape().as_list() == [None, self.image_dim1]
-		assert attn_logits.get_shape().as_list() == [None, self.image_dim1]
+		# Calculate attention similarity vector - shape (N, k)
+		if self.attn_func == "trilinear":
+			XM = tf.multiply(tf.expand_dims(X, 1), M)	# (N, k, h)
+			X_logits = tf.tensordot(X, self.w_x, axes=[[1], [0]])  # (N,)
+			M_logits = tf.tensordot(M, self.w_m, axes=[[2], [0]])  # (N, k)
+			XM_logits = tf.tensordot(XM, self.w_dot, axes=[[2], [0]])  # (N, k)
+			attn_logits = tf.expand_dims(X_logits, 1) + M_logits + XM_logits
+			assert XM.get_shape().as_list() == [None, self.image_dim1, self.hidden_size]
+			assert X_logits.get_shape().as_list() == [None]
+			assert M_logits.get_shape().as_list() == [None, self.image_dim1]
+			assert XM_logits.get_shape().as_list() == [None, self.image_dim1]
+		elif self.attn_func == "tanh":
+			X_logits = tf.matmul(X, self.w_x)  # (N, k)
+			X_logits = tf.tile(tf.expand_dims(X_logits, 1), [1, self.image_dim1, 1])  # (N, k, k)
+			M_logits = tf.tensordot(M, self.w_m, axes=[[2], [0]])  # (N, k, k)
+			attn_logits = tf.tensordot(tf.tanh(X_logits + M_logits), self.w_dot, axes=[[2], [0]])  # (N, k)
+			assert X_logits.get_shape().as_list() == [None, self.image_dim1, self.image_dim1]
+			assert M_logits.get_shape().as_list() == [None, self.image_dim1, self.image_dim1]
+		else:
+			raise Exception("Invalid attention function option!")
 
+		assert attn_logits.get_shape().as_list() == [None, self.image_dim1]
 		attn_weights = tf.nn.softmax(attn_logits, axis=-1)
 		attn_weights = tf.expand_dims(attn_weights, -1)  # (N, k, 1)
 		attn_vec = tf.reduce_sum(attn_weights * M, axis=1)  # (N, h)

@@ -27,5 +27,7 @@ For the baseline model, lr = 2e-4, p_drop = 0.2, hidden_size = 512 is a good set
 
 As of 05-17, the best baseline model achieves CIDEr 93.9, Bleu-4 30.5, METEOR 24.7, ROUGE 52.4
 
-# Next Steps
-Attention Model. Salesforce's "Knowing When to Look" seems like a good choice. Unlike many other visual attention models, its methods are more like those found in modern NLP models.
+# Attention Model Experiments
+The attention model using the custom BasicAttentionLayer with tri-linear similarity function (implemented and trained on 05-21) achieves CIDEr 96.7, Bleu-4 31.0, METEOR 25.2, ROUGE 52.9. The model was not tuned at all, so it can definitely be improved by careful tuning (is it worth it though?)
+
+Next Step: Experiment with Salesforce's "Knowing When to Look" model. Need to create a custom SentinelLSTM cell (subclass tensorflow.python.ops.rnn_cell_impl.LayerRNNCell), and create a new SentinelAttention layer (subclass tensorflow.python.layers.base.layer)
