@@ -8,6 +8,132 @@ from tensorflow.python.layers import base
 from tensorflow.python.framework import tensor_shape
 
 
+class SentinelAttentionLayer(base.Layer):
+	"""
+	This class implements the sentinel attention layer that is compatible with TensorFlow built-in decoder modules
+
+	Inputs:
+		concat([hidden_state, sentinel], axis=-1) - shape [None, hidden_size] or [None, beam_width, 2* hidden_size]
+	Uses:
+		Memory (i.e. image_features) - shape [None, image_dim1, hidden_size]
+	Outputs:
+		logits - shape [None, vocab_size] or [None, beam_width, vocab_size]
+	"""
+
+	def __init__(self, output_units, memory, keep_prob, beam_width, name=None, **kwargs):
+		super(SentinelAttentionLayer, self).__init__(trainable=True, name=name, activity_regularizer=None, **kwargs)
+		self.output_units = output_units
+		self.memory = memory
+		self.keep_prob = keep_prob
+		memory_shape = memory.get_shape().as_list()
+		assert len(memory_shape) == 3
+		self.image_dim1 = memory_shape[1]
+		self.hidden_size = memory_shape[2]	# LSTM hidden state size
+
+		self.memory_tile = tf.tile(tf.expand_dims(memory, axis=1), [1, beam_width, 1, 1])
+		assert self.memory_tile.get_shape().as_list() == [None, beam_width, self.image_dim1, self.hidden_size]
+		self.memory_tile = tf.reshape(self.memory_tile, [-1, self.image_dim1, self.hidden_size])
+		assert self.memory_tile.get_shape().as_list() == [None, self.image_dim1, self.hidden_size]
+
+		self.attn_func = "tanh"
+
+	def build(self, input_shape):
+		"""
+		Called once from __call__, when we know the shapes of of inputs and 'dtype'
+		Should have the calls to add_variable()
+		input_shape is of type 'TensorShape'
+		"""
+		input_shape = tensor_shape.TensorShape(input_shape)
+
+		# For initial non-linear transformation
+		self.wx_1 = self.add_variable('wx_1', shape=[self.hidden_size, self.hidden_size], dtype=tf.float32, trainable=True)
+		self.bx_1 = self.add_variable('bx_1', shape=[self.hidden_size], initializer=tf.zeros_initializer(), dtype=tf.float32, trainable=True)
+		self.ws_1 = self.add_variable('ws_1', shape=[self.hidden_size, self.hidden_size], dtype=tf.float32, trainable=True)
+		self.bs_1 = self.add_variable('bs_1', shape=[self.hidden_size], initializer=tf.zeros_initializer(), dtype=tf.float32, trainable=True)
+
+		# For tanh similarity function
+		self.w_x = self.add_variable('kernel_attn_x', shape=[self.hidden_size, self.image_dim1], dtype=tf.float32, trainable=True)
+		self.w_m = self.add_variable('kernel_attn_m', shape=[self.hidden_size, self.image_dim1], dtype=tf.float32, trainable=True)
+		self.w_s = self.add_variable('kernel_attn_s', shape=[self.hidden_size, self.image_dim1], dtype=tf.float32, trainable=True)
+		self.w_dot = self.add_variable('kernel_attn_dot', shape=[self.image_dim1], dtype=tf.float32, trainable=True)
+
+		# For final non-linear transformation
+		self.w_dense = self.add_variable('kernel_dense', shape=[3*self.hidden_size, self.hidden_size], dtype=tf.float32, trainable=True)
+		self.b_dense = self.add_variable('bias_dense', shape=[self.hidden_size], initializer=tf.zeros_initializer(), dtype=tf.float32, trainable=True)
+
+		# For output projection to the vocab space
+		self.w_proj = self.add_variable('kernel_projection', shape=[self.hidden_size, self.output_units], dtype=tf.float32, trainable=True)
+		self.built = True
+
+	def call(self, inputs):
+		"""
+		Called in __call__ after making sure build() has been called once
+		Should perform the logic of applying the layer to the input tensors
+		"""
+		shape = inputs.get_shape().as_list()
+		assert shape[-1] == 2*self.hidden_size
+		beam = (len(shape) == 3)
+		if beam:
+			inputs = tf.reshape(inputs, [-1, 2*self.hidden_size])
+
+		# Use X (hidden state), S (sentinel vector) and M (memory) for all later computations
+		X, S = tf.split(value=inputs, num_or_size_splits=2, axis=1)
+		M = self.memory_tile if beam else self.memory
+		assert X.get_shape().as_list() == [None, self.hidden_size] and S.get_shape().as_list() == [None, self.hidden_size]
+		assert M.get_shape().as_list() == [None, self.image_dim1, self.hidden_size]
+
+		# Transform everything using one-layer NN
+		X = tf.tanh(tf.matmul(X, self.wx_1) + self.bx_1)  # (N, h)
+		S = tf.nn.relu(tf.matmul(S, self.ws_1) + self.bs_1)  # (N, h), use ReLU because image features are from ReLU
+		X = tf.nn.dropout(X, self.keep_prob)
+		S = tf.nn.dropout(S, self.keep_prob)
+
+		# Calculate attention similarity vector - shape (N, k)
+		X_logits = tf.matmul(X, self.w_x)  # (N, k)
+		X_logits = tf.tile(tf.expand_dims(X_logits, 1), [1, self.image_dim1+1, 1])  # (N, k+1, k)
+		S_logits = tf.expand_dims(tf.matmul(S, self.w_s), axis=1)  # (N, 1, k)
+		M_logits = tf.tensordot(M, self.w_m, axes=[[2], [0]])  # (N, k, k)
+		M_logits = tf.concat([M_logits, S_logits], axis=1)  # (N, k+1, k)
+		attn_logits = tf.tensordot(tf.tanh(X_logits + M_logits), self.w_dot, axes=[[2], [0]])  # (N, k+1)
+		assert X_logits.get_shape().as_list() == [None, self.image_dim1+1, self.image_dim1]
+		assert M_logits.get_shape().as_list() == [None, self.image_dim1+1, self.image_dim1]
+		assert attn_logits.get_shape().as_list() == [None, self.image_dim1+1]
+
+		attn_weights = tf.nn.softmax(attn_logits, axis=-1)
+		attn_weights = tf.expand_dims(attn_weights, -1)  # (N, k+1, 1)
+		S = tf.expand_dims(S, axis=1)  # (N, 1, h)
+		MS = tf.concat([M, S], axis=1)  # (N, k+1, h)
+		attn_vec = tf.reduce_sum(attn_weights * MS, axis=1)  # (N, h)
+		assert MS.get_shape().as_list() == [None, self.image_dim1+1, self.hidden_size]
+		assert attn_vec.get_shape().as_list() == [None, self.hidden_size]
+
+		# Dense layer
+		G = tf.concat([X, attn_vec, X * attn_vec], axis=-1)  # (N, 3*h)
+		assert G.get_shape().as_list() == [None, 3*self.hidden_size]
+		G = tf.nn.relu(tf.matmul(G, self.w_dense) + self.b_dense)
+		G = tf.nn.dropout(G, self.keep_prob)
+		assert G.get_shape().as_list() == [None, self.hidden_size]
+
+		outputs = tf.matmul(G, self.w_proj)
+		assert outputs.get_shape().as_list() == [None, self.output_units]
+
+		if beam:
+			outputs = tf.reshape(outputs, [-1, shape[1], self.output_units])
+
+		self.attn_weights = attn_weights
+		return outputs
+
+	def compute_output_shape(self, input_shape):
+		'''
+		input_shape: A (possibly nested tuple of) TensorShape. It need not be fully defined (e.g. the batch size may be unknown).
+		Returns: A (possibly nested tuple of) TensorShape
+		'''
+		input_shape = tensor_shape.TensorShape(input_shape)
+		output_shape = input_shape[:-1].concatenate(self.output_units)
+		return output_shape
+
+
+
 class BasicAttentionLayer(base.Layer):
 	"""
 	This class implements a basic attention layer that is compatible with TensorFlow built-in decoder modules
@@ -129,53 +255,6 @@ class BasicAttentionLayer(base.Layer):
 		input_shape = tensor_shape.TensorShape(input_shape)
 		output_shape = input_shape[:-1].concatenate(self.output_units)
 		return output_shape
-
-
-class DenseLayer(base.Layer):
-	"""
-	Densely-connected layer class.
-	This layer implements the operation: `outputs = inputs * kernel`
-	`kernel` is a weights matrix created by the layer
-	"""
-	def __init__(self, units, memory_tensor, name=None, **kwargs):
-		super(DenseLayer, self).__init__(trainable=True, name=name, activity_regularizer=None, **kwargs)
-		self.units = units
-		self.memory_tensor = memory_tensor
-
-	def build(self, input_shape):
-		"""
-		Called once from __call__, when we know the shapes of of inputs and 'dtype'
-		Should have the calls to add_variable()
-		input_shape is of type 'TensorShape'
-		"""
-		input_shape = tensor_shape.TensorShape(input_shape)
-		self.kernel = self.add_variable('kernel', shape=[input_shape[-1].value, self.units], dtype=tf.float32, trainable=True)
-		self.built = True
-
-	def call(self, inputs):
-		"""
-		Called in __call__ after making sure build() has been called once
-		Should perform the logic of applying the layer to the input tensors
-		"""
-		shape = inputs.get_shape().as_list()
-		beam = (len(shape) == 3)
-		if beam:
-			inputs = tf.reshape(inputs, [-1, shape[-1]])
-
-		outputs = tf.matmul(inputs, self.kernel)
-		if beam:
-			outputs = tf.reshape(outputs, [-1, shape[1], self.units])
-		return outputs
-
-	def compute_output_shape(self, input_shape):
-		'''
-		input_shape: A (possibly nested tuple of) TensorShape. It need not be fully defined (e.g. the batch size may be unknown).
-		Returns: A (possibly nested tuple of) TensorShape
-		'''
-		input_shape = tensor_shape.TensorShape(input_shape)
-		output_shape = input_shape[:-1].concatenate(self.units)
-		return output_shape
-
 
 
 class RNNDecoder(object):

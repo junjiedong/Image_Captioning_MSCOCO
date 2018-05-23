@@ -5,17 +5,19 @@ import time
 import logging
 import os
 import sys
+import h5py
+import _pickle as cPickle
+import json
 import numpy as np
 import tensorflow as tf
 
 from pycocotools.coco import COCO
 from coco.coco_caption_py3.pycocoevalcap.eval import COCOEvalCap
-from data_batcher import get_batch_generator
-from modules import BasicTransferLayer, RNNDecoder, DenseLayer, BasicAttentionLayer
+
 from vocab import PAD_ID, UNK_ID, EOS_ID, SOS_ID    # 0, 1, 2, 3
-import h5py
-import _pickle as cPickle
-import json
+from data_batcher import get_batch_generator
+from modules import BasicTransferLayer, RNNDecoder, BasicAttentionLayer, SentinelAttentionLayer
+from SentinelLSTM import SentinelLSTMCell
 
 
 class CaptionModel(object):
@@ -77,7 +79,7 @@ class CaptionModel(object):
             # Use He Initialization by default
             self.add_placeholders()
             self.add_embedding_layer(emb_matrix)
-            self.build_graph_attention()
+            self.build_graph_sentinel()
             self.add_loss()
 
         # Define trainable parameters, gradient, gradient norm, and clip by gradient norm
@@ -132,6 +134,88 @@ class CaptionModel(object):
             self.caption_input_embs = tf.nn.embedding_lookup(self.embedding_matrix, self.caption_ids_input, name='caption_input_embs')
 
 
+    def build_graph_sentinel(self):
+        '''
+        Uses:
+            self.image_features     - [batch_size (None), image_dim1, image_dim2] placeholder
+
+            self.caption_input_embs - [batch_size (None), max_caption_len, emb_dim] tensor
+            self.caption_mask       - [batch_size (None), max_caption_len] placeholder
+
+            self.embedding_matrix   - [vocab_size, embedding_size] tensor
+            self.keep_prob          - scalar tensor
+
+        Defines:
+            self.logits: output from decoder, used for training. Shape [batch_size (None), T (None), vocab_size]
+            self.predicted_ids: output ids from decoder, used for evaluation. Shape [batch_size (None), T (None), beam_width]
+        '''
+        ########################################
+        # Just for convenience
+        ########################################
+        vocab_size, embedding_size = self.vocab_size, self.FLAGS.embedding_size
+        image_dim1, image_dim2 = self.FLAGS.image_dim1, self.FLAGS.image_dim2
+        max_caption_len, beam_width = self.FLAGS.max_caption_len, self.FLAGS.beam_width
+        hidden_size = self.FLAGS.hidden_size
+
+        ########################################
+        # Build Memory (i.e. Image transformation)
+        ########################################
+        with tf.variable_scope("MemoryEncoder"):
+            image_features_global = tf.reduce_mean(self.image_features, axis=1)
+            assert image_features_global.get_shape().as_list() == [None, image_dim2]
+
+            memory_global = tf.layers.dense(image_features_global, units=2*hidden_size, activation=tf.nn.relu, use_bias=True)
+            memory_global = tf.nn.dropout(memory_global, self.keep_prob)
+            assert memory_global.get_shape().as_list() == [None, 2*hidden_size]
+
+            memory = tf.layers.dense(self.image_features, units=hidden_size, activation=tf.nn.relu, use_bias=True)
+            memory = tf.nn.dropout(memory, self.keep_prob)
+            assert memory.get_shape().as_list() == [None, image_dim1, hidden_size]
+
+        ########################################
+        # Input dropout & RNN Cell
+        ########################################
+        caption_input_embs_drop = tf.nn.dropout(self.caption_input_embs, self.keep_prob)
+        with tf.variable_scope("SentinelLSTMCell"):
+            RNN_Cell = SentinelLSTMCell(num_units=hidden_size, output_keep_prob=self.keep_prob)
+        attention_layer = SentinelAttentionLayer(output_units=vocab_size, memory=memory, keep_prob=self.keep_prob, beam_width=beam_width, name=None)
+
+        ########################################
+        # Training graph
+        ########################################
+        with tf.variable_scope("TrainingDecoder"):
+            sequence_length = tf.reduce_sum(self.caption_mask, axis=1)
+            assert sequence_length.get_shape().as_list() == [None]
+
+            helper = tf.contrib.seq2seq.TrainingHelper(caption_input_embs_drop, sequence_length)
+            training_decoder = tf.contrib.seq2seq.BasicDecoder(cell=RNN_Cell, helper=helper, initial_state=memory_global, output_layer=attention_layer)
+            self.logits = tf.contrib.seq2seq.dynamic_decode(training_decoder)[0].rnn_output
+            assert self.logits.get_shape().as_list() == [None, None, vocab_size]  # (N, T, V)
+
+        ########################################
+        # Inference graph
+        ########################################
+        with tf.variable_scope("InferenceDecoder"):
+            # Replicate initial_state and start_token for the BeamSearchDecoder
+            initial_state_decoder = tf.contrib.seq2seq.tile_batch(memory_global, multiplier=beam_width)
+            start_tokens = tf.fill([tf.shape(memory_global)[0]], SOS_ID)
+
+            # Build beam search decoder
+            inference_decoder = tf.contrib.seq2seq.BeamSearchDecoder(
+                cell=RNN_Cell,
+                embedding=self.embedding_matrix,
+                start_tokens=start_tokens,
+                end_token=EOS_ID,
+                initial_state=initial_state_decoder,
+                beam_width=beam_width,
+                output_layer=attention_layer,
+                length_penalty_weight=0.0)
+
+            # Dynamic decoding
+            self.predicted_ids = tf.contrib.seq2seq.dynamic_decode(inference_decoder, maximum_iterations=max_caption_len)[0].predicted_ids
+            assert self.predicted_ids.get_shape().as_list() == [None, None, beam_width]  # (N, T, bw)
+
+
     def build_graph_attention(self):
         '''
         Uses:
@@ -156,14 +240,6 @@ class CaptionModel(object):
         hidden_size = self.FLAGS.hidden_size
 
         ########################################
-        # Assert input dimensions
-        ########################################
-        assert self.image_features.get_shape().as_list() == [None, image_dim1, image_dim2]
-        assert self.caption_input_embs.get_shape().as_list() == [None, max_caption_len, embedding_size]
-        assert self.caption_mask.get_shape().as_list() == [None, max_caption_len]
-        assert self.embedding_matrix.get_shape().as_list() == [vocab_size, embedding_size]
-
-        ########################################
         # Build Memory (i.e. Image transformation)
         ########################################
         with tf.variable_scope("MemoryEncoder"):
@@ -181,14 +257,10 @@ class CaptionModel(object):
         ########################################
         # RNN Cell with dropout wrapper
         ########################################
-        # TODO: Create custom LSTM cell for the visual sentinel model
-        # TODO: Refer to https://github.com/tensorflow/tensorflow/blob/r1.8/tensorflow/python/ops/rnn_cell_impl.py
         with tf.variable_scope("LSTMCell"):
             RNN_Cell = tf.contrib.rnn.BasicLSTMCell(num_units=hidden_size, state_is_tuple=False)
             RNN_Cell = tf.contrib.rnn.DropoutWrapper(RNN_Cell, input_keep_prob=self.keep_prob, output_keep_prob=self.keep_prob, state_keep_prob=1.0)
 
-        # attention_layer = tf.layers.Dense(vocab_size, use_bias=False, name='AttentionLayer')
-        # attention_layer = DenseLayer(units=vocab_size, memory_tensor=memory, name=None)
         attention_layer = BasicAttentionLayer(output_units=vocab_size, memory=memory, keep_prob=self.keep_prob, beam_width=beam_width, name=None)
         ########################################
         # Training graph
@@ -197,9 +269,6 @@ class CaptionModel(object):
             sequence_length = tf.reduce_sum(self.caption_mask, axis=1)
             assert sequence_length.get_shape().as_list() == [None]
 
-            # https://github.com/tensorflow/tensorflow/blob/r1.8/tensorflow/python/layers/core.py
-            # https://www.tensorflow.org/api_docs/python/tf/layers/Layer
-            # http://tensorlayer.readthedocs.io/en/latest/modules/layers.html#a-simple-layer
             helper = tf.contrib.seq2seq.TrainingHelper(self.caption_input_embs, sequence_length)
             training_decoder = tf.contrib.seq2seq.BasicDecoder(cell=RNN_Cell, helper=helper, initial_state=memory_global, output_layer=attention_layer)
             self.logits = tf.contrib.seq2seq.dynamic_decode(training_decoder)[0].rnn_output
