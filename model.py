@@ -123,9 +123,7 @@ class CaptionModel(object):
         """
         with tf.variable_scope("embeddings"):
             if self.FLAGS.special_token == "train":
-                trainable_emb = tf.Variable(initial_value=emb_matrix[:4,:], trainable=True, name='trainable_emb_matrix', dtype=tf.float32)
-                constant_emb = tf.constant(emb_matrix[4:,:], dtype=tf.float32, name="constant_emb_matrix")
-                self.embedding_matrix = tf.concat(values=[trainable_emb, constant_emb], axis=0)
+                self.embedding_matrix = tf.Variable(initial_value=emb_matrix, trainable=True, name='trainable_emb_matrix', dtype=tf.float32)
             else:
                 # Note: tf.constant means it's not a trainable parameter
                 self.embedding_matrix = tf.constant(emb_matrix, dtype=tf.float32, name="emb_matrix")

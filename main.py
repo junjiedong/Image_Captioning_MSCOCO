@@ -28,7 +28,7 @@ tf.app.flags.DEFINE_string("primary_metric", "CIDEr", "Primary evaluation metric
 
 # Fixed (i.e. not intended to be tuned) Model Parameters
 tf.app.flags.DEFINE_integer("embedding_size", 300, "Dimension of embeddings for words")
-tf.app.flags.DEFINE_integer("max_caption_len", 31, "Maximum caption length (for both input and output)")
+tf.app.flags.DEFINE_integer("max_caption_len", 19, "Maximum caption length (for both input and output)")
 tf.app.flags.DEFINE_integer("image_dim1", 64, "Number of regions (eg. 8*8=64 for InceptionRes)")
 tf.app.flags.DEFINE_integer("image_dim2", 1536, "Dimension of image feature for each region (eg. 1536 for InceptionRes)")
 
@@ -39,7 +39,7 @@ tf.app.flags.DEFINE_float("dropout", 0.2, "Fraction of units randomly dropped on
 tf.app.flags.DEFINE_integer("batch_size", 128, "Batch size to use")
 tf.app.flags.DEFINE_integer("hidden_size", 512, "Size of the RNN states")
 tf.app.flags.DEFINE_integer("beam_width", 3, "Beam width of beam search decoder")
-tf.app.flags.DEFINE_string("special_token", "zero", "Whether to make UNK and SOS trainable. Available options: zero/train")
+tf.app.flags.DEFINE_string("special_token", "train", "Whether to make UNK and SOS trainable. Available options: zero/train")
 
 # How often to print, save, eval
 tf.app.flags.DEFINE_integer("print_every", 20, "How many iterations to do per print.")
