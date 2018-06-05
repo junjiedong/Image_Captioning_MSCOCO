@@ -318,7 +318,7 @@ def main(params):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--max_length', default=30, type=int, help='max length of a caption, in number of words. captions longer than this get clipped.')
+    parser.add_argument('--max_length', default=18, type=int, help='max length of a caption, in number of words. captions longer than this get clipped.')
     parser.add_argument('--word_count_threshold', default=5, type=int, help='only words that occur more than this number of times will be put in vocab')
     parser.add_argument('--num_val', default=5000, type=int, help='number of validation images')
     parser.add_argument('--num_test', default=5000, type=int, help='number of test images')

@@ -33,7 +33,7 @@ tf.app.flags.DEFINE_integer("image_dim1", 64, "Number of regions (eg. 8*8=64 for
 tf.app.flags.DEFINE_integer("image_dim2", 1536, "Dimension of image feature for each region (eg. 1536 for InceptionRes)")
 
 # Hyperparameters
-tf.app.flags.DEFINE_float("learning_rate", 0.0002, "Learning rate.")
+tf.app.flags.DEFINE_float("learning_rate", 0.0001, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 5.0, "Clip gradients to this norm.")
 tf.app.flags.DEFINE_float("dropout", 0.2, "Fraction of units randomly dropped on non-recurrent connections.")
 tf.app.flags.DEFINE_integer("batch_size", 128, "Batch size to use")
@@ -49,7 +49,6 @@ tf.app.flags.DEFINE_integer("keep", 1, "How many checkpoints to keep. 0 indicate
 
 # For eval mode
 tf.app.flags.DEFINE_string("ckpt_load_dir", "", "For eval mode, which directory to load the checkpoint from. You need to specify this for eval mode.")
-tf.app.flags.DEFINE_string("json_out_path", "", "Output path for eval mode.")   # Currently not used. Need to modify check_metric function in order to use this
 
 # Placeholders. Do not touch
 tf.app.flags.DEFINE_string("MAIN_DIR", "", "_")

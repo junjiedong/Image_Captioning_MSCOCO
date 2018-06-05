@@ -21,13 +21,3 @@ Options: --primary_metric, --num_epochs, --learning_rate, --dropout, --batch_siz
 python main.py --mode=eval --experiment_name=baseline --ckpt_load_dir=./experiments/baseline/best_checkpoint --data_source=ram/ssd
 
 Note: The optimal beam width can be tuned by only running in eval mode for multiple times (although using the best beam width for early stopping during training might give slightly better performance)
-
-# Baseline Experiments
-For the baseline model, lr = 2e-4, p_drop = 0.2, hidden_size = 512 is a good set of hyperparameters. It was also found that adding bias in the final projection layer doesn't affect model performance at all. Beam width 3 outperforms all other values - 3 is also what Google's Show-and-Tell and Salesforce's Knowing-When-to-Look used. These hyperparameters are now set to be default in main.py
-
-As of 05-17, the best baseline model achieves CIDEr 93.9, Bleu-4 30.5, METEOR 24.7, ROUGE 52.4
-
-# Attention Model Experiments
-The attention model using the custom BasicAttentionLayer with tri-linear similarity function (implemented and trained on 05-21) achieves CIDEr 96.7, Bleu-4 31.0, METEOR 25.2, ROUGE 52.9. The model was not tuned at all, so it can definitely be improved by careful tuning (is it worth it though?)
-
-Next Step: Experiment with Salesforce's "Knowing When to Look" model. Need to create a custom SentinelLSTM cell (subclass tensorflow.python.ops.rnn_cell_impl.LayerRNNCell), and create a new SentinelAttention layer (subclass tensorflow.python.layers.base.layer)

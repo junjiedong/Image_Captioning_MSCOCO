@@ -120,7 +120,6 @@ class SentinelAttentionLayer(base.Layer):
 		if beam:
 			outputs = tf.reshape(outputs, [-1, shape[1], self.output_units])
 
-		self.attn_weights = attn_weights
 		return outputs
 
 	def compute_output_shape(self, input_shape):

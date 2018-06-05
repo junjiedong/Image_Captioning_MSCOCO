@@ -210,8 +210,14 @@ class CaptionModel(object):
                 length_penalty_weight=0.0)
 
             # Dynamic decoding
-            self.predicted_ids = tf.contrib.seq2seq.dynamic_decode(inference_decoder, maximum_iterations=max_caption_len)[0].predicted_ids
+            decoder_results = tf.contrib.seq2seq.dynamic_decode(inference_decoder, maximum_iterations=max_caption_len)
+            self.predicted_ids = decoder_results[0].predicted_ids
             assert self.predicted_ids.get_shape().as_list() == [None, None, beam_width]  # (N, T, bw)
+
+            # decoder_results - Tuple
+            # decoder_results[0] - FinalBeamSearchDecoderOutput
+            self.predicted_scores = decoder_results[0].beam_search_decoder_output.scores
+            assert self.predicted_scores.get_shape().as_list() == [None, None, beam_width]  # (N, T, bw)
 
 
     def build_graph_attention(self):
@@ -409,9 +415,10 @@ class CaptionModel(object):
         """
         # Only need image_features for prediction. Do not supply keep_prob here so it will default to 1
         input_feed = {self.image_features: batch.image_features}
-        output_feed = [self.predicted_ids]
-        [predicted_ids] = session.run(output_feed, input_feed)  # (batch_size, max_len, beam_width)
+        output_feed = [self.predicted_ids, self.predicted_scores]
+        [predicted_ids, predicted_scores] = session.run(output_feed, input_feed)  # (batch_size, max_len, beam_width)
         predicted_ids = predicted_ids[:, :, 0]  # Only take the best result for each one
+        predicted_scores = predicted_scores[:, :, 0]
 
         # Decode the output
         captions = {}
